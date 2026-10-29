@@ -38,6 +38,46 @@ private func mpvWakeup(_ context: UnsafeMutableRawPointer?) {
     }
 }
 
+struct VideoCrop: Equatable {
+    let x: Int
+    let y: Int
+    let width: Int
+    let height: Int
+}
+
+enum VideoBlackBarDetector {
+    static func horizontalCrop(bytes: UnsafeRawPointer, width: Int, height: Int, stride: Int) -> VideoCrop? {
+        guard width > 0, height > 0, stride >= width * 4 else { return nil }
+        let pixels = bytes.assumingMemoryBound(to: UInt8.self)
+        let xStep = max(1, width / 256)
+        let xStart = width / 20
+        let xEnd = width - xStart
+
+        func rowIsBlack(_ y: Int) -> Bool {
+            var samples = 0
+            var black = 0
+            for x in Swift.stride(from: xStart, to: xEnd, by: xStep) {
+                let offset = y * stride + x * 4
+                let brightest = max(pixels[offset], pixels[offset + 1], pixels[offset + 2])
+                samples += 1
+                if brightest <= 12 { black += 1 }
+            }
+            return samples > 0 && black * 100 >= samples * 98
+        }
+
+        var top = 0
+        while top < height / 4, rowIsBlack(top) { top += 1 }
+        var bottom = 0
+        while bottom < height / 4, rowIsBlack(height - bottom - 1) { bottom += 1 }
+        var inset = min(top, bottom)
+        guard inset >= max(2, Int(Double(height) * 0.015)) else { return nil }
+        inset -= inset % 2
+        let croppedHeight = height - inset * 2
+        guard croppedHeight > height / 2 else { return nil }
+        return VideoCrop(x: 0, y: inset, width: width, height: croppedHeight)
+    }
+}
+
 /// libmpv 单引擎：直接读取 MKV 等原文件，由 mpv 统一负责拆包、硬解、缓存、跳转和音画同步。
 @MainActor
 @Observable
@@ -85,6 +125,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     @ObservationIgnored private var mediaGeneration: UInt64 = 0
     @ObservationIgnored private var videoRecoveryTask: Task<Void, Never>?
     @ObservationIgnored private var needsVideoReloadOnAttach = false
+    @ObservationIgnored private var fileIsLoaded = false
+    @ObservationIgnored private var cropDetectionTask: Task<Void, Never>?
 
     public init(headless: Bool = false) {
         self.headless = headless
@@ -113,6 +155,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         }
         cancelSegment()
         videoRecoveryTask?.cancel()
+        cropDetectionTask?.cancel()
         mediaGeneration &+= 1
         seekGeneration &+= 1
         state = .loading
@@ -133,6 +176,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         lastError = nil
         loadedURL = url
         needsVideoReloadOnAttach = surface.window == nil
+        fileIsLoaded = false
+        setString("video-crop", "")
         self.autoplay = autoplay && !preload
         configureBuffering(forPreload: preload)
         setFlag("pause", true)
@@ -160,11 +205,13 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     public func stop() {
         cancelSegment()
         videoRecoveryTask?.cancel()
+        cropDetectionTask?.cancel()
         mediaGeneration &+= 1
         seekGeneration &+= 1
         command("stop")
         loadedURL = nil
         needsVideoReloadOnAttach = false
+        fileIsLoaded = false
         currentTime = 0
         observedTime = 0
         bufferedTime = 0
@@ -343,6 +390,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         observe("eof-reached", MPV_FORMAT_FLAG)
         observe("width", MPV_FORMAT_INT64)
         observe("height", MPV_FORMAT_INT64)
+        observe("dwidth", MPV_FORMAT_INT64)
+        observe("dheight", MPV_FORMAT_INT64)
         observe("track-list", MPV_FORMAT_NONE)
         observe("hwdec-current", MPV_FORMAT_STRING)
         observe("demuxer-cache-time", MPV_FORMAT_DOUBLE)
@@ -357,7 +406,12 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     }
 
     private func surfaceAttachmentChanged(_ attached: Bool) {
-        guard attached, needsVideoReloadOnAttach, loadedURL != nil else { return }
+        guard attached else { return }
+        recoverVideoAfterAttachmentIfNeeded()
+    }
+
+    private func recoverVideoAfterAttachmentIfNeeded() {
+        guard needsVideoReloadOnAttach, fileIsLoaded, surface.window != nil, loadedURL != nil else { return }
         needsVideoReloadOnAttach = false
         setString("vid", "auto")
         command("video-reload")
@@ -389,6 +443,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     }
 
     private func fileLoaded() {
+        fileIsLoaded = true
+        recoverVideoAfterAttachmentIfNeeded()
         let mpvDuration = getDouble("duration")
         if mpvDuration > 0 { duration = mpvDuration }
         reloadPresentationInfo()
@@ -403,6 +459,13 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
                   !self.getFlag("vo-configured") else { return }
             self.setString("vid", "auto")
             self.command("video-reload")
+        }
+        if !headless {
+            cropDetectionTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(700))
+                guard let self, !Task.isCancelled, generation == self.mediaGeneration else { return }
+                self.detectAndApplyBlackBarCrop()
+            }
         }
     }
 
@@ -430,7 +493,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
             else if state == .loading { state = getFlag("pause") ? .paused : .playing }
         case "eof-reached":
             if flag(from: property.data) == true, state != .loading, loadedURL != nil { state = .ended }
-        case "width", "height", "track-list", "hwdec-current":
+        case "width", "height", "dwidth", "dheight", "track-list", "hwdec-current":
             reloadPresentationInfo()
         case "demuxer-cache-time":
             if let value = property.data?.assumingMemoryBound(to: Double.self).pointee, value.isFinite {
@@ -463,7 +526,13 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     private func reloadPresentationInfo() {
         let width = getInt("width")
         let height = getInt("height")
-        if width > 0, height > 0 { presentationSize = CGSize(width: width, height: height) }
+        let displayWidth = getInt("dwidth")
+        let displayHeight = getInt("dheight")
+        let fittedWidth = displayWidth > 0 ? displayWidth : width
+        let fittedHeight = displayHeight > 0 ? displayHeight : height
+        if fittedWidth > 0, fittedHeight > 0 {
+            presentationSize = CGSize(width: fittedWidth, height: fittedHeight)
+        }
         let codec = getString("video-codec") ?? getString("video-format")
         if let codec, width > 0, height > 0 {
             let hwdec = getString("hwdec-current")
@@ -504,6 +573,77 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         subtitleOptions = subtitles
         self.selectedSubtitleID = selectedSubtitleID
         nativeSubtitleDescription = selectedSubtitle
+    }
+
+    private func detectAndApplyBlackBarCrop() {
+        guard let handle else { return }
+        var values: [UnsafePointer<CChar>?] = (["screenshot-raw", "video", "bgr0"]).map { value in
+            guard let pointer = strdup(value) else { return nil }
+            return UnsafePointer(pointer)
+        }
+        values.append(nil)
+        defer {
+            values.dropLast().forEach { pointer in
+                if let pointer { free(UnsafeMutablePointer(mutating: pointer)) }
+            }
+        }
+
+        var result = mpv_node()
+        let status = values.withUnsafeMutableBufferPointer { buffer in
+            mpv_command_ret(handle, buffer.baseAddress, &result)
+        }
+        guard status >= 0 else {
+            #if DEBUG
+            NSLog("黑边检测截图失败 %s", mpv_error_string(status))
+            #endif
+            return
+        }
+        defer { mpv_free_node_contents(&result) }
+        guard result.format == MPV_FORMAT_NODE_MAP,
+              let width = nodeInt(result, key: "w"),
+              let height = nodeInt(result, key: "h"),
+              let stride = nodeInt(result, key: "stride"),
+              let data = nodeBytes(result, key: "data"),
+              let crop = VideoBlackBarDetector.horizontalCrop(bytes: data, width: width,
+                                                               height: height, stride: stride)
+        else {
+            #if DEBUG
+            NSLog("黑边检测未发现可裁剪区域")
+            #endif
+            return
+        }
+
+        #if DEBUG
+        NSLog("黑边检测 %ldx%ld -> %ldx%ld+%ld+%ld", width, height,
+              crop.width, crop.height, crop.x, crop.y)
+        #endif
+
+        setString("video-crop", "\(crop.width)x\(crop.height)+\(crop.x)+\(crop.y)")
+        let displayWidth = getInt("dwidth")
+        let displayHeight = getInt("dheight")
+        guard displayWidth > 0, displayHeight > 0 else { return }
+        presentationSize = CGSize(width: Double(displayWidth) * Double(crop.width) / Double(width),
+                                  height: Double(displayHeight) * Double(crop.height) / Double(height))
+    }
+
+    private func node(_ node: mpv_node, key: String) -> mpv_node? {
+        guard node.format == MPV_FORMAT_NODE_MAP, let list = node.u.list?.pointee,
+              let keys = list.keys, let values = list.values else { return nil }
+        for index in 0..<Int(list.num) {
+            if let rawKey = keys[index], String(cString: rawKey) == key { return values[index] }
+        }
+        return nil
+    }
+
+    private func nodeInt(_ node: mpv_node, key: String) -> Int? {
+        guard let value = self.node(node, key: key), value.format == MPV_FORMAT_INT64 else { return nil }
+        return Int(value.u.int64)
+    }
+
+    private func nodeBytes(_ node: mpv_node, key: String) -> UnsafeRawPointer? {
+        guard let value = self.node(node, key: key), value.format == MPV_FORMAT_BYTE_ARRAY,
+              let bytes = value.u.ba?.pointee.data else { return nil }
+        return UnsafeRawPointer(bytes)
     }
 
     private func flag(from pointer: UnsafeMutableRawPointer?) -> Bool? {

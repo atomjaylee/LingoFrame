@@ -124,7 +124,7 @@ private struct PlayerScreen: View {
         content.size = CGSize(width: width, height: height)
         var frame = window.frameRect(forContentRect: content)
         frame.origin.y = max(frame.origin.y, visible.minY)
-        window.setFrame(frame, display: true, animate: true)
+        window.setFrame(frame, display: true)
     }
 
     private var stage: some View {

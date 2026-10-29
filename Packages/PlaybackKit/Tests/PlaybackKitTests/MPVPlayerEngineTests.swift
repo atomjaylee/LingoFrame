@@ -40,16 +40,19 @@ private final class RangeProtocol: URLProtocol, @unchecked Sendable {
 
 private let ffmpeg = "/usr/local/bin/ffmpeg"
 
-private func makeTestMKV(duration: Int = 6) throws -> URL {
+private func makeTestMKV(duration: Int = 6, sampleAspectRatio: String? = nil) throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("elenglish-mpv-\(UUID().uuidString).mkv")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: ffmpeg)
-    process.arguments = [
+    var arguments = [
         "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24",
         "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
-        "-t", "\(duration)", "-c:v", "h264_videotoolbox", "-b:v", "1M", "-g", "12",
-        "-c:a", "aac", "-shortest", url.path,
+        "-t", "\(duration)",
     ]
+    if let sampleAspectRatio { arguments += ["-vf", "setsar=\(sampleAspectRatio)"] }
+    arguments += ["-c:v", "h264_videotoolbox", "-b:v", "1M", "-g", "12",
+                  "-c:a", "aac", "-shortest", url.path]
+    process.arguments = arguments
     try process.run()
     process.waitUntilExit()
     guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
@@ -91,6 +94,28 @@ private func waitUntil(timeout: Double = 10, _ condition: () -> Bool) async thro
 @MainActor
 @Suite(.serialized)
 struct MPVPlayerEngineTests {
+    @Test func detectsEncodedHorizontalBlackBars() {
+        let width = 640
+        let height = 360
+        var pixels = Data(repeating: 0, count: width * height * 4)
+        pixels.withUnsafeMutableBytes { raw in
+            guard let bytes = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            for y in 40..<320 {
+                for x in 0..<width {
+                    let offset = (y * width + x) * 4
+                    bytes[offset] = 96
+                    bytes[offset + 1] = 128
+                    bytes[offset + 2] = 160
+                }
+            }
+        }
+        let crop = pixels.withUnsafeBytes { raw in
+            VideoBlackBarDetector.horizontalCrop(bytes: raw.baseAddress!, width: width,
+                                                  height: height, stride: width * 4)
+        }
+        #expect(crop == VideoCrop(x: 0, y: 40, width: 640, height: 280))
+    }
+
     @Test func cacheLimitCanBeConfigured() {
         let old = MediaCachePolicy.limitGB
         defer { MediaCachePolicy.limitGB = old }
@@ -124,6 +149,20 @@ struct MPVPlayerEngineTests {
         #expect(abs(engine.currentTime - 3.2) < 0.4)
         engine.stop()
         #expect(engine.state == .idle)
+    }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
+    func reportsDisplayAspectRatioInsteadOfEncodedPixels() async throws {
+        let source = try makeTestMKV(duration: 2, sampleAspectRatio: "4/3")
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        let engine = MPVPlayerEngine(headless: true)
+        engine.load(url: source, autoplay: false)
+        try await waitUntil {
+            engine.state == .paused && engine.presentationSize.width / engine.presentationSize.height > 2.3
+        }
+        #expect(engine.presentationSize.width / engine.presentationSize.height > 2.3)
+        engine.stop()
     }
 
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))

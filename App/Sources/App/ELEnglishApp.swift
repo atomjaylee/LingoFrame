@@ -20,7 +20,7 @@ struct ELEnglishApp: App {
             PlayerWindow(request: model.playRequest, requestRevision: model.playRequestRevision)
                 .appEnvironment(model)
         }
-        .windowStyle(.titleBar)
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1440, height: 900)
         .restorationBehavior(.disabled)
 
