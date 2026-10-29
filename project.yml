@@ -1,0 +1,99 @@
+name: ELEnglish
+options:
+  bundleIdPrefix: app.elenglish
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  developmentLanguage: zh-Hans
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+  configs:
+    Debug:
+      ONLY_ACTIVE_ARCH: YES
+    Release:
+      ONLY_ACTIVE_ARCH: NO
+      ARCHS: "arm64 x86_64"
+
+packages:
+  LearningCore:
+    path: Packages/LearningCore
+  DesignSystem:
+    path: Packages/DesignSystem
+  Workspace:
+    path: Packages/Workspace
+  MediaServerKit:
+    path: Packages/MediaServerKit
+  PlaybackKit:
+    path: Packages/PlaybackKit
+  TMDBKit:
+    path: Packages/TMDBKit
+
+targets:
+  ELEnglish:
+    type: application
+    platform: macOS
+    sources:
+      - App/Sources
+    dependencies:
+      - package: LearningCore
+      - package: DesignSystem
+      - package: Workspace
+      - package: MediaServerKit
+      - package: PlaybackKit
+      - package: TMDBKit
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: ELEnglish
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSApplicationCategoryType: public.app-category.education
+        LSMinimumSystemVersion: "15.0"
+        NSHumanReadableCopyright: ""
+        # Emby 服务器常见 http 局域网地址或自签证书，媒体播放器通常需要放开 ATS。
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSLocalNetworkUsageDescription: 用于连接局域网中的 Emby 媒体服务器。
+        # 允许在访达里「用 ELEnglish 打开」本地视频。
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Video
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.movie]
+    entitlements:
+      path: App/ELEnglish.entitlements
+      properties:
+        com.apple.security.network.client: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.elenglish.mac
+        PRODUCT_NAME: ELEnglish
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: YES
+        COMBINE_HIDPI_IMAGES: YES
+
+schemes:
+  ELEnglish:
+    build:
+      targets:
+        ELEnglish: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - package: LearningCore/LearningCoreTests
+        - package: DesignSystem/DesignSystemTests
+        - package: Workspace/WorkspaceTests
+        - package: MediaServerKit/MediaServerKitTests
+        - package: PlaybackKit/PlaybackKitTests
+        - package: TMDBKit/TMDBKitTests
+    archive:
+      config: Release
