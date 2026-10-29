@@ -82,11 +82,15 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     @ObservationIgnored private var hasAbsoluteCacheTime = false
     @ObservationIgnored private var mediaGeneration: UInt64 = 0
     @ObservationIgnored private var videoRecoveryTask: Task<Void, Never>?
+    @ObservationIgnored private var needsVideoReloadOnAttach = false
 
     public init(headless: Bool = false) {
         self.headless = headless
         let resources = MPVResources(handle: mpv_create())
         self.resources = resources
+        surface.onWindowChanged = { [weak self] attached in
+            self?.surfaceAttachmentChanged(attached)
+        }
         guard let handle = resources.handle else {
             state = .failed("无法创建 libmpv 播放内核")
             return
@@ -124,6 +128,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         setNativeSubtitlesVisible(true)
         lastError = nil
         loadedURL = url
+        needsVideoReloadOnAttach = surface.window == nil
         self.autoplay = autoplay && !preload
         configureBuffering(forPreload: preload)
         setFlag("pause", true)
@@ -155,6 +160,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         seekGeneration &+= 1
         command("stop")
         loadedURL = nil
+        needsVideoReloadOnAttach = false
         currentTime = 0
         observedTime = 0
         bufferedTime = 0
@@ -332,6 +338,13 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         setInt("demuxer-max-bytes", preload ? 32 * 1024 * 1024 : 512 * 1024 * 1024)
         setInt("demuxer-max-back-bytes", preload ? 8 * 1024 * 1024 : 128 * 1024 * 1024)
         setDouble("cache-secs", preload ? 5 : 60)
+    }
+
+    private func surfaceAttachmentChanged(_ attached: Bool) {
+        guard attached, needsVideoReloadOnAttach, loadedURL != nil else { return }
+        needsVideoReloadOnAttach = false
+        setString("vid", "auto")
+        command("video-reload")
     }
 
     private func observe(_ name: String, _ format: mpv_format) {
@@ -545,6 +558,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
 
 public final class MPVSurfaceView: NSView {
     public let metalLayer = CAMetalLayer()
+    var onWindowChanged: (@MainActor (Bool) -> Void)?
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -556,6 +570,11 @@ public final class MPVSurfaceView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindowChanged?(window != nil)
+    }
 
     public override var mouseDownCanMoveWindow: Bool { true }
 }
