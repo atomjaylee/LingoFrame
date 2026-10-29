@@ -5,8 +5,63 @@ import PlaybackKit
 import SwiftUI
 import Workspace
 
+@MainActor
+final class PlayerWindowController: NSObject, NSWindowDelegate {
+    static let shared = PlayerWindowController()
+    private var window: NSWindow?
+    private var frameAspectRatio: Double?
+
+    func show(model: AppModel) {
+        if window == nil {
+            let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+            let size = NSSize(width: min(1440, screen.width), height: min(900, screen.height))
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                                  backing: .buffered, defer: false)
+            window.backgroundColor = .black
+            window.hasShadow = true
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.standardWindowButton(.closeButton)?.isHidden = true
+            window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            window.standardWindowButton(.zoomButton)?.isHidden = true
+            window.isReleasedWhenClosed = false
+            window.minSize = NSSize(width: 720, height: 332)
+            window.collectionBehavior.insert(.fullScreenPrimary)
+            window.delegate = self
+            window.contentViewController = NSHostingController(
+                rootView: AnyView(PlayerWindowHost().ignoresSafeArea().appEnvironment(model))
+            )
+            window.center()
+            self.window = window
+        }
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func setAspectRatio(_ size: CGSize) {
+        frameAspectRatio = size.width > 0 && size.height > 0 ? size.width / size.height : nil
+    }
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        guard let ratio = frameAspectRatio, ratio > 0, !sender.styleMask.contains(.fullScreen) else { return frameSize }
+        let current = sender.frame.size
+        if abs(frameSize.width - current.width) >= abs(frameSize.height - current.height) {
+            return NSSize(width: frameSize.width, height: frameSize.width / ratio)
+        }
+        return NSSize(width: frameSize.height * ratio, height: frameSize.height)
+    }
+}
+
+private struct PlayerWindowHost: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        PlayerWindow(request: model.playRequest, requestRevision: model.playRequestRevision)
+    }
+}
+
 struct PlayerWindow: View {
-    static let id = "player"
     let request: PlayRequest?
     let requestRevision: UInt64
     @Environment(AppModel.self) private var model
@@ -17,7 +72,7 @@ struct PlayerWindow: View {
             Color.black
             if let session { PlayerScreen(session: session) }
         }
-        .frame(minWidth: 720, minHeight: 420)
+        .frame(minWidth: 720, minHeight: 332)
         .task(id: requestRevision) {
             guard let request else { return }
             let serverID = request.serverID
@@ -75,7 +130,6 @@ private struct PlayerScreen: View {
             PlayerSurface(engine: session.engine)
             stage
         }
-        .ignoresSafeArea()
         .background(Color.black)
         .environment(session)
         .environment(\.colorScheme, .dark)
@@ -108,23 +162,26 @@ private struct PlayerScreen: View {
     /// 像 Infuse 一样让窗口比例跟视频一致：宽度不变、按视频比例调高度（放不下就整体缩小），之后拖动缩放也保持比例。
     private func fitWindow(to size: CGSize) {
         guard let window, size.width > 0, size.height > 0, !window.styleMask.contains(.fullScreen) else { return }
-        window.contentAspectRatio = size
+        PlayerWindowController.shared.setAspectRatio(size)
         let ratio = size.height / size.width
         let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? window.frame
-        var content = window.contentRect(forFrameRect: window.frame)
-        var width = content.width
+        var frame = window.frame
+        var width = frame.width
         var height = (width * ratio).rounded()
         if height > visible.height {
             height = visible.height
             width = (height / ratio).rounded()
         }
-        guard abs(height - content.height) > 1 || abs(width - content.width) > 1 else { return }
+        guard abs(height - frame.height) > 1 || abs(width - frame.width) > 1 else { return }
         // 保持窗口顶边位置不动。
-        content.origin.y += content.height - height
-        content.size = CGSize(width: width, height: height)
-        var frame = window.frameRect(forContentRect: content)
+        frame.origin.y += frame.height - height
+        frame.size = CGSize(width: width, height: height)
         frame.origin.y = max(frame.origin.y, visible.minY)
         window.setFrame(frame, display: true)
+        Task { @MainActor in
+            await Task.yield()
+            session.engine.refreshVideoSurface()
+        }
     }
 
     private var stage: some View {

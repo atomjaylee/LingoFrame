@@ -16,14 +16,6 @@ struct ELEnglishApp: App {
         .defaultSize(width: 1440, height: 900)
         .commands { AppCommands(model: model) }
 
-        Window("播放", id: PlayerWindow.id) {
-            PlayerWindow(request: model.playRequest, requestRevision: model.playRequestRevision)
-                .appEnvironment(model)
-        }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1440, height: 900)
-        .restorationBehavior(.disabled)
-
         WindowGroup("面板", id: WorkspaceWindows.floatingPanel, for: String.self) { $panelID in
             FloatingPanelView(panelID: panelID)
                 .environment(model.activeSession)

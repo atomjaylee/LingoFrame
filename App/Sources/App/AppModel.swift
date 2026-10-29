@@ -211,12 +211,12 @@ final class AppModel {
         return preparedPlayback
     }
 
-    func showPlayer(_ request: PlayRequest, using openWindow: OpenWindowAction) {
+    func showPlayer(_ request: PlayRequest, using _: OpenWindowAction) {
         // 详情页预热请求可能还在网络途中；先失效，避免它回来后覆盖用户刚点开的集数。
         preparationGeneration &+= 1
         playRequest = request
         playRequestRevision &+= 1
-        openWindow(id: PlayerWindow.id)
+        PlayerWindowController.shared.show(model: self)
     }
 
     /// 启动时刷新所有服务器，并把片目和 TMDB 对上号。

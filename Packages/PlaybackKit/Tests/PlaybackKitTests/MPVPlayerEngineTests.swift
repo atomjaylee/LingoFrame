@@ -97,7 +97,7 @@ struct MPVPlayerEngineTests {
     @Test func detectsEncodedHorizontalBlackBars() {
         let width = 640
         let height = 360
-        var pixels = Data(repeating: 0, count: width * height * 4)
+        var pixels = Data(repeating: 16, count: width * height * 4)
         pixels.withUnsafeMutableBytes { raw in
             guard let bytes = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
             for y in 40..<320 {

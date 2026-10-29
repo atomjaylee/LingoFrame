@@ -60,7 +60,7 @@ enum VideoBlackBarDetector {
                 let offset = y * stride + x * 4
                 let brightest = max(pixels[offset], pixels[offset + 1], pixels[offset + 2])
                 samples += 1
-                if brightest <= 12 { black += 1 }
+                if brightest <= 40 { black += 1 }
             }
             return samples > 0 && black * 100 >= samples * 98
         }
@@ -287,6 +287,11 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
             selectedSubtitleID = nil
             setNativeSubtitlesVisible(false)
         }
+    }
+
+    public func refreshVideoSurface() {
+        setString("vid", "auto")
+        command("video-reload")
     }
 
     /// 学习层字幕尚未就绪时由 mpv 直接显示 ASS/PGS；文本字幕下载完成后切回可点击的自绘字幕。
