@@ -190,15 +190,18 @@ final class AppModel {
             return
         } catch {
             // 预热失败不影响正常播放，点击后仍会走完整加载。
-            preparedPlayback = nil
+            if generation == preparationGeneration { preparedPlayback = nil }
         }
     }
 
     func takePreparedPlayback(serverID: String, itemID: String, resume: Bool) -> PreparedPlayback? {
-        guard let preparedPlayback,
-              preparedPlayback.serverID == serverID,
+        guard let preparedPlayback else { return nil }
+        guard preparedPlayback.serverID == serverID,
               preparedPlayback.item.id == itemID,
-              resume || preparedPlayback.startAt == nil else { return nil }
+              resume || preparedPlayback.startAt == nil else {
+            self.preparedPlayback = nil
+            return nil
+        }
         self.preparedPlayback = nil
         return preparedPlayback
     }

@@ -30,6 +30,7 @@ struct PlayerWindow: View {
             if let session, session.serverID == serverID {
                 s = session
             } else {
+                session?.close()
                 s = PlaybackSession(client: model.server(serverID)?.client, serverID: serverID,
                                     engine: model.playbackEngine)
             }
@@ -39,10 +40,8 @@ struct PlayerWindow: View {
         }
         .onDisappear {
             guard let s = session else { return }
-            Task {
-                await s.close()
-                if model.activeSession === s { model.activeSession = nil }
-            }
+            s.close()
+            if model.activeSession === s { model.activeSession = nil }
         }
     }
 }

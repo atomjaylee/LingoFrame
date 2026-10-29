@@ -80,6 +80,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     @ObservationIgnored private let headless: Bool
     @ObservationIgnored private var didAutoSelectSubtitle = false
     @ObservationIgnored private var hasAbsoluteCacheTime = false
+    @ObservationIgnored private var mediaGeneration: UInt64 = 0
+    @ObservationIgnored private var videoRecoveryTask: Task<Void, Never>?
 
     public init(headless: Bool = false) {
         self.headless = headless
@@ -104,6 +106,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
             return
         }
         cancelSegment()
+        videoRecoveryTask?.cancel()
+        mediaGeneration &+= 1
         seekGeneration &+= 1
         state = .loading
         currentTime = startAt ?? 0
@@ -123,11 +127,16 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         self.autoplay = autoplay && !preload
         configureBuffering(forPreload: preload)
         setFlag("pause", true)
-        var options: [String] = ["pause=yes"]
+        var options: [String] = ["pause=yes", "vid=auto", "sid=auto"]
         if let startAt, startAt > 0 { options.append("start=\(startAt)") }
         let playbackURL = cachedSource.map(resources.streamRegistry.register) ?? url
-        command("loadfile", [playbackURL.isFileURL ? playbackURL.path : playbackURL.absoluteString,
-                             "replace", "-1", options.joined(separator: ",")])
+        let result = command("loadfile", [playbackURL.isFileURL ? playbackURL.path : playbackURL.absoluteString,
+                                          "replace", "-1", options.joined(separator: ",")])
+        if result < 0 {
+            let message = String(cString: mpv_error_string(result))
+            lastError = message
+            state = .failed(message)
+        }
     }
 
     /// 详情页预热完成后，播放窗口直接激活同一个内核，不重新打开文件。
@@ -141,6 +150,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
 
     public func stop() {
         cancelSegment()
+        videoRecoveryTask?.cancel()
+        mediaGeneration &+= 1
         seekGeneration &+= 1
         command("stop")
         loadedURL = nil
@@ -161,7 +172,16 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     }
 
     public func play() {
-        if state == .ended { Task { await seek(to: 0, exact: true); setFlag("pause", false) }; return }
+        if state == .ended {
+            state = .paused
+            Task { [weak self] in
+                guard let self else { return }
+                await self.seek(to: 0, exact: true)
+                guard self.state == .paused else { return }
+                self.play()
+            }
+            return
+        }
         setDouble("speed", rate)
         setFlag("pause", false)
         state = .playing
@@ -181,7 +201,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         let target = max(0, duration > 0 ? min(seconds, duration) : seconds)
         seekGeneration &+= 1
         let generation = seekGeneration
-        command("seek", [String(format: "%.3f", target), exact ? "absolute+exact" : "absolute"])
+        guard command("seek", [String(format: "%.3f", target), exact ? "absolute+exact" : "absolute"]) >= 0 else { return }
 
         let deadline = ContinuousClock.now + .seconds(5)
         let tolerance = exact ? 0.18 : 0.8
@@ -288,6 +308,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         mpv_stream_cb_add_ro(handle, "elcache", registry, mpvCacheOpen)
         mpv_request_log_messages(handle, "warn")
         guard mpv_initialize(handle) >= 0 else {
+            mpv_terminate_destroy(handle)
             resources.handle = nil
             state = .failed("libmpv 初始化失败")
             return
@@ -304,6 +325,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         observe("hwdec-current", MPV_FORMAT_STRING)
         observe("demuxer-cache-time", MPV_FORMAT_DOUBLE)
         observe("demuxer-cache-duration", MPV_FORMAT_DOUBLE)
+        observe("vo-configured", MPV_FORMAT_FLAG)
     }
 
     private func configureBuffering(forPreload preload: Bool) {
@@ -343,6 +365,16 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         reloadPresentationInfo()
         state = autoplay ? .playing : .paused
         setFlag("pause", !autoplay)
+        let generation = mediaGeneration
+        videoRecoveryTask?.cancel()
+        videoRecoveryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled, generation == self.mediaGeneration,
+                  self.loadedURL != nil, self.getString("video-codec") != nil,
+                  !self.getFlag("vo-configured") else { return }
+            self.setString("vid", "auto")
+            self.command("video-reload")
+        }
     }
 
     private func propertyChanged(_ data: UnsafeMutableRawPointer?) {
@@ -350,6 +382,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         let property = data.assumingMemoryBound(to: mpv_event_property.self).pointee
         guard let rawName = property.name else { return }
         let name = String(cString: rawName)
+        guard loadedURL != nil else { return }
         switch name {
         case "time-pos":
             if let value = property.data?.assumingMemoryBound(to: Double.self).pointee, value.isFinite {
@@ -367,7 +400,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
             if flag(from: property.data) == true { state = .loading }
             else if state == .loading { state = getFlag("pause") ? .paused : .playing }
         case "eof-reached":
-            if flag(from: property.data) == true { state = .ended }
+            if flag(from: property.data) == true, state != .loading, loadedURL != nil { state = .ended }
         case "width", "height", "track-list", "hwdec-current":
             reloadPresentationInfo()
         case "demuxer-cache-time":
@@ -386,7 +419,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     }
 
     private func endFile(_ data: UnsafeMutableRawPointer?) {
-        guard let data else { return }
+        guard loadedURL != nil, let data else { return }
         let event = data.assumingMemoryBound(to: mpv_event_end_file.self).pointee
         if event.reason == MPV_END_FILE_REASON_ERROR {
             let message = String(cString: mpv_error_string(event.error))
@@ -441,8 +474,9 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         pointer?.assumingMemoryBound(to: Int32.self).pointee != 0
     }
 
-    private func command(_ name: String, _ arguments: [String] = []) {
-        guard let handle else { return }
+    @discardableResult
+    private func command(_ name: String, _ arguments: [String] = []) -> Int32 {
+        guard let handle else { return MPV_ERROR_UNINITIALIZED.rawValue }
         var values: [UnsafePointer<CChar>?] = ([name] + arguments).map { value in
             guard let pointer = strdup(value) else { return nil }
             return UnsafePointer(pointer)
@@ -453,8 +487,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
                 if let pointer { free(UnsafeMutablePointer(mutating: pointer)) }
             }
         }
-        values.withUnsafeMutableBufferPointer { buffer in
-            _ = mpv_command(handle, buffer.baseAddress)
+        return values.withUnsafeMutableBufferPointer { buffer in
+            mpv_command(handle, buffer.baseAddress)
         }
     }
 
@@ -474,6 +508,11 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         guard let handle else { return }
         var number = value
         mpv_set_property(handle, name, MPV_FORMAT_DOUBLE, &number)
+    }
+
+    private func setString(_ name: String, _ value: String) {
+        guard let handle else { return }
+        mpv_set_property_string(handle, name, value)
     }
 
     private func getFlag(_ name: String) -> Bool {

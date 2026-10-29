@@ -61,6 +61,8 @@ final class PlaybackSession {
     @ObservationIgnored private var hudTask: Task<Void, Never>?
     @ObservationIgnored private var reportedStart = false
     @ObservationIgnored private var lastRequest: PlayRequest?
+    @ObservationIgnored private var loadGeneration: UInt64 = 0
+    @ObservationIgnored private var jumpGeneration: UInt64 = 0
     private let profile = DeviceProfile.libmpv
     private let log = Logger(subsystem: "app.elenglish", category: "session")
 
@@ -102,7 +104,9 @@ final class PlaybackSession {
         lastRequest = request
         switch request {
         case .local(let url):
-            await finishCurrent()
+            let generation = beginLoad()
+            finishCurrent()
+            guard generation == loadGeneration else { return }
             errorMessage = nil
             localURL = url
             engine.load(url: url)
@@ -124,7 +128,9 @@ final class PlaybackSession {
             errorMessage = "请先登录 Emby"
             return
         }
-        await finishCurrent()
+        let generation = beginLoad()
+        finishCurrent()
+        guard generation == loadGeneration else { return }
         errorMessage = nil
         if let serverID {
             lastRequest = .emby(serverID: serverID, itemID: itemID, resume: resume)
@@ -137,10 +143,12 @@ final class PlaybackSession {
         }
         do {
             let item = try await client.item(itemID)
+            guard generation == loadGeneration else { return }
             mark("条目")
             self.item = item
             let start = resume ? item.resumePositionSeconds : nil
             let info = try await client.playbackInfo(itemID: itemID, startSeconds: start, profile: profile)
+            guard generation == loadGeneration else { return }
             mark("播放信息")
             let stream = try client.resolveOriginalStream(itemID: itemID, info: info)
             self.stream = stream
@@ -149,16 +157,21 @@ final class PlaybackSession {
             log.info("播放 \(itemID, privacy: .public) 路线 libmpv 原文件")
             engine.load(url: stream.url, startAt: start, durationHint: durationHint,
                         cachedSource: cachedSource(itemID: item.id, stream: stream))
-            startReporting()
+            startReporting(generation: generation)
             if item.kind == .episode, let seriesID = item.seriesId {
-                siblings = (try? await client.episodes(of: seriesID, season: item.seasonId)) ?? []
+                let loaded = (try? await client.episodes(of: seriesID, season: item.seasonId)) ?? []
+                guard generation == loadGeneration else { return }
+                siblings = loaded
             } else {
                 siblings = []
             }
         } catch {
+            guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
             if siblings.isEmpty, let item, item.kind == .episode, let seriesID = item.seriesId {
-                siblings = (try? await client.episodes(of: seriesID, season: item.seasonId)) ?? []
+                let loaded = (try? await client.episodes(of: seriesID, season: item.seasonId)) ?? []
+                guard generation == loadGeneration else { return }
+                siblings = loaded
             }
         }
     }
@@ -168,7 +181,9 @@ final class PlaybackSession {
             errorMessage = "请先登录 Emby"
             return
         }
-        await finishCurrent(preserveEngine: true)
+        let generation = beginLoad()
+        finishCurrent(preserveEngine: true)
+        guard generation == loadGeneration else { return }
         errorMessage = nil
         lastRequest = .emby(serverID: prepared.serverID, itemID: prepared.item.id, resume: resume)
         item = prepared.item
@@ -180,15 +195,23 @@ final class PlaybackSession {
             engine.load(url: prepared.stream.url, startAt: start, durationHint: durationHint,
                         cachedSource: cachedSource(itemID: prepared.item.id, stream: prepared.stream))
         }
-        startReporting()
+        startReporting(generation: generation)
         if prepared.item.kind == .episode, let seriesID = prepared.item.seriesId {
-            siblings = (try? await client.episodes(of: seriesID, season: prepared.item.seasonId)) ?? []
+            let loaded = (try? await client.episodes(of: seriesID, season: prepared.item.seasonId)) ?? []
+            guard generation == loadGeneration else { return }
+            siblings = loaded
         } else {
             siblings = []
         }
     }
 
     private var durationHint: Double? { item?.runTimeTicks.map { Double($0) / 10_000_000 } }
+
+    private func beginLoad() -> UInt64 {
+        loadGeneration &+= 1
+        jumpGeneration &+= 1
+        return loadGeneration
+    }
 
     static func defaultAudio(of source: MediaSourceInfo) -> MediaStream? {
         source.audioStreams.first { $0.index == source.defaultAudioStreamIndex }
@@ -206,8 +229,9 @@ final class PlaybackSession {
     }
 
     /// 关闭窗口时调用：上报停止、停掉服务器转码、释放播放器。
-    func close() async {
-        await finishCurrent()
+    func close() {
+        _ = beginLoad()
+        finishCurrent()
     }
 
     /// 播放到结尾：立即上报停止（Emby 会据此把这一集标记为已看）。
@@ -215,19 +239,19 @@ final class PlaybackSession {
         reporter?.cancel()
         reporter = nil
         guard reportedStart else { return }
+        let stopped = makeReport(.stopped)
         reportedStart = false
-        Task { await send(.stopped) }
+        if let stopped { Task { await transmit(stopped, as: .stopped) } }
     }
 
-    private func finishCurrent(preserveEngine: Bool = false) async {
+    private func finishCurrent(preserveEngine: Bool = false) {
         reporter?.cancel()
         reporter = nil
-        if reportedStart { await send(.stopped) }
+        let stopped = reportedStart ? makeReport(.stopped) : nil
         reportedStart = false
-        if let stream, stream.method != .directPlay, let id = stream.playSessionID {
-            try? await client?.stopEncoding(playSessionID: id)
-        }
         if !preserveEngine { engine.stop() }
+        item = nil
+        siblings = []
         stream = nil
         localURL = nil
         subtitleTask?.cancel()
@@ -241,6 +265,7 @@ final class PlaybackSession {
         primaryCues = []
         secondaryCues = []
         subtitleNote = nil
+        if let stopped { Task { await transmit(stopped, as: .stopped) } }
     }
 
     // MARK: 字幕
@@ -371,11 +396,14 @@ final class PlaybackSession {
 
     func jump(toLine index: Int) {
         guard primaryCues.indices.contains(index) else { return }
+        jumpGeneration &+= 1
+        let generation = jumpGeneration
         currentLine = index
         loopPass = 1
         pausedAfterLine = nil
         Task {
             await engine.seek(to: primaryCues[index].range.start.seconds, exact: true)
+            guard generation == jumpGeneration else { return }
             if engine.state != .playing { engine.play() }
         }
     }
@@ -415,7 +443,10 @@ final class PlaybackSession {
     func togglePlay() {
         let willPause = engine.state == .playing
         engine.togglePlay()
-        if reportedStart { Task { await send(.progress(event: willPause ? "Pause" : "Unpause", paused: willPause)) } }
+        let generation = loadGeneration
+        if reportedStart {
+            Task { await send(.progress(event: willPause ? "Pause" : "Unpause", paused: willPause), generation: generation) }
+        }
     }
 
     func seek(by seconds: Double) {
@@ -466,15 +497,17 @@ final class PlaybackSession {
     }
 
     /// 等到真正开始播放才上报「开始」，之后每 10 秒上报一次进度（Emby 服务器自己会按秒累加，不需要更频繁）。
-    private func startReporting() {
+    private func startReporting(generation: UInt64) {
         reporter?.cancel()
         reportedStart = false
         guard client != nil else { return }
         reporter = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
+                guard self.loadGeneration == generation else { return }
                 if self.engine.state == .playing {
-                    await self.send(.start)
+                    await self.send(.start, generation: generation)
+                    guard !Task.isCancelled, self.loadGeneration == generation else { return }
                     self.reportedStart = true
                     break
                 }
@@ -483,25 +516,35 @@ final class PlaybackSession {
             }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(10))
-                guard !Task.isCancelled, let self else { return }
-                await self.send(.progress(event: "TimeUpdate"))
+                guard !Task.isCancelled, let self, self.loadGeneration == generation else { return }
+                await self.send(.progress(event: "TimeUpdate"), generation: generation)
             }
         }
     }
 
-    private func send(_ kind: Report) async {
-        guard let client, let item, let stream else { return }
+    private func send(_ kind: Report, generation: UInt64? = nil) async {
+        if let generation, generation != loadGeneration { return }
+        guard let report = makeReport(kind) else { return }
+        await transmit(report, as: kind)
+    }
+
+    private func makeReport(_ kind: Report) -> PlaybackReport? {
+        guard let item, let stream else { return nil }
         var paused = engine.state != .playing
         var event: String?
         if case .progress(let e, let p) = kind {
             event = e
             if let p { paused = p }
         }
-        let report = PlaybackReport(
+        return PlaybackReport(
             itemId: item.id, mediaSourceId: stream.mediaSource.id, playSessionId: stream.playSessionID,
             positionSeconds: engine.absoluteTime,
             isPaused: paused, isMuted: engine.isMuted, playMethod: stream.method, playbackRate: engine.rate,
             eventName: event)
+    }
+
+    private func transmit(_ report: PlaybackReport, as kind: Report) async {
+        guard let client else { return }
         do {
             switch kind {
             case .start: try await client.reportPlaybackStart(report)

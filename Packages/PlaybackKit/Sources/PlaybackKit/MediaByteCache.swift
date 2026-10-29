@@ -94,12 +94,15 @@ final class MPVStreamRegistry: @unchecked Sendable {
         activeToken = token
         lock.unlock()
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: directory.path)
-        let root = root
-        DispatchQueue.global(qos: .utility).async {
-            Self.pruneGlobalCache(root: root, excluding: token)
-        }
-        let ext = descriptor.fileExtension?.trimmingCharacters(in: CharacterSet(charactersIn: ".")) ?? "media"
-        return URL(string: "elcache://\(token)/source.\(ext)")!
+        schedulePrune(excludingActive: true)
+        let rawExtension = descriptor.fileExtension?.trimmingCharacters(in: CharacterSet(charactersIn: ".")) ?? "media"
+        let sanitizedExtension = rawExtension.filter { $0.isLetter || $0.isNumber }
+        let ext = sanitizedExtension.isEmpty ? "media" : String(sanitizedExtension.prefix(16))
+        var components = URLComponents()
+        components.scheme = "elcache"
+        components.host = token
+        components.path = "/source.\(ext)"
+        return components.url ?? descriptor.url
     }
 
     fileprivate func source(for uri: String) -> ContinuousMediaSource? {
@@ -111,9 +114,14 @@ final class MPVStreamRegistry: @unchecked Sendable {
     }
 
     func applyConfiguredLimit(excludingActive: Bool) {
-        let token = lock.withLock { excludingActive ? activeToken : nil }
+        schedulePrune(excludingActive: excludingActive)
+    }
+
+    private func schedulePrune(excludingActive: Bool) {
         let root = root
-        DispatchQueue.global(qos: .utility).async {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let token = self.lock.withLock { excludingActive ? self.activeToken : nil }
             Self.pruneGlobalCache(root: root, excluding: token)
         }
     }
@@ -218,6 +226,7 @@ private final class ContinuousMediaSource: @unchecked Sendable {
     private var eofOffset: Int64?
     private var networkError: Error?
     private var retryingOriginal = false
+    private var networkRetryCount = 0
 
     init(descriptor: CachedMediaSource, directory: URL) {
         remoteURL = descriptor.url
@@ -231,13 +240,17 @@ private final class ContinuousMediaSource: @unchecked Sendable {
         condition.withLock {
             remoteURL = url
             if let size { knownSize = size }
+            if request == nil { ranges = Self.loadRanges(from: directory) }
         }
     }
 
     func size() -> Int64? { condition.withLock { knownSize } }
 
     func prepareForOpen() {
-        condition.withLock { networkError = nil }
+        condition.withLock {
+            networkError = nil
+            networkRetryCount = 0
+        }
     }
 
     func read(offset: Int64, count: Int) throws -> Data {
@@ -347,7 +360,10 @@ private final class ContinuousMediaSource: @unchecked Sendable {
             if let error, (error as? URLError)?.code != .cancelled {
                 if retryingOriginal {
                     retryingOriginal = false
-                    startRequest(at: downloadedEnd, forceOriginal: true)
+                    startRequest(at: downloadedEnd, forceOriginal: true, isRetry: true)
+                } else if networkRetryCount < 2 {
+                    networkRetryCount += 1
+                    startRequest(at: downloadedEnd, isRetry: true)
                 } else {
                     networkError = error
                 }
@@ -362,7 +378,8 @@ private final class ContinuousMediaSource: @unchecked Sendable {
         }
     }
 
-    private func startRequest(at offset: Int64, forceOriginal: Bool = false) {
+    private func startRequest(at offset: Int64, forceOriginal: Bool = false, isRetry: Bool = false) {
+        if !isRetry { networkRetryCount = 0 }
         generation &+= 1
         request?.cancel()
         writer?.close()

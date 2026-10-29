@@ -66,9 +66,27 @@ enum PlaybackProbe {
             NSLog("playtest %@", line)
             lines.append(line)
             try? lines.joined(separator: "\n").write(to: out, atomically: true, encoding: .utf8)
-            await session.close()
+            session.close()
         }
         NSLog("playtest done %@", out.path)
+    }
+
+    /// 快速连续切两集，验证较慢的旧请求不会覆盖最后一次点击。
+    static func runSwitchTest(server: ServerConnection) async {
+        guard let series = server.catalog.first(where: { $0.kind == .series }),
+              let episodes = try? await server.client.episodes(of: series.id, season: nil), episodes.count >= 2 else {
+            NSLog("switchtest 没有可用的两集")
+            return
+        }
+        let engine = MPVPlayerEngine()
+        let session = PlaybackSession(client: server.client, serverID: server.id, engine: engine)
+        let first = Task { await session.play(itemID: episodes[0].id, resume: false) }
+        try? await Task.sleep(for: .milliseconds(30))
+        await session.play(itemID: episodes[1].id, resume: false)
+        await first.value
+        for _ in 0..<40 where engine.state != .playing { try? await Task.sleep(for: .milliseconds(250)) }
+        NSLog("switchtest 目标=%@ 实际=%@ 状态=%@", episodes[1].id, session.item?.id ?? "-", "\(engine.state)")
+        session.close()
     }
 }
 #endif

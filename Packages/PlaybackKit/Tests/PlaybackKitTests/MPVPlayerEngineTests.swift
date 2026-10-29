@@ -6,12 +6,20 @@ import Testing
 private final class RangeProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var bytes = Data()
     nonisolated(unsafe) static var requestCount = 0
+    nonisolated(unsafe) static var failuresRemaining = 0
 
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "cache.test" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         Self.requestCount += 1
+        if Self.failuresRemaining > 0 {
+            Self.failuresRemaining -= 1
+            let response = HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: "HTTP/1.1", headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
         let total = Self.bytes.count
         let range = request.value(forHTTPHeaderField: "Range") ?? "bytes=0-\(max(total - 1, 0))"
         let values = range.dropFirst(6).split(separator: "-", maxSplits: 1)
@@ -128,11 +136,27 @@ struct MPVPlayerEngineTests {
     }
 
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
+    func replayAfterEndRestartsPlayback() async throws {
+        let source = try makeTestMKV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        let engine = MPVPlayerEngine(headless: true)
+        engine.load(url: source)
+        try await waitUntil { engine.state == .ended }
+        engine.play()
+        try await waitUntil { engine.state == .playing && engine.currentTime < 0.8 }
+        engine.stop()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(engine.state == .idle)
+    }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
     func cachedRemoteMKVUsesCustomByteStream() async throws {
         let source = try makeTestMKV(duration: 3)
         defer { try? FileManager.default.removeItem(at: source) }
         RangeProtocol.bytes = try Data(contentsOf: source)
         RangeProtocol.requestCount = 0
+        RangeProtocol.failuresRemaining = 1
         MediaCacheTesting.protocolClasses = [RangeProtocol.self]
         defer { MediaCacheTesting.protocolClasses = nil }
 
@@ -145,11 +169,11 @@ struct MPVPlayerEngineTests {
         #expect(abs(engine.duration - 3) < 0.3)
         await engine.seek(to: 1.8, exact: true)
         #expect(abs(engine.currentTime - 1.8) < 0.4)
-        #expect(RangeProtocol.requestCount <= 3)
+        #expect(RangeProtocol.requestCount <= 4)
         engine.stop()
         engine.load(url: remote, autoplay: false, cachedSource: descriptor)
         try await waitUntil { engine.state == .paused && engine.duration > 0 }
-        #expect(RangeProtocol.requestCount <= 4)
+        #expect(RangeProtocol.requestCount <= 5)
         engine.stop()
     }
 }

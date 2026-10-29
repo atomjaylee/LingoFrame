@@ -159,11 +159,17 @@ struct MainShell: View {
                 NSLog("耐久 结束 位置 %.1f 解码 %@ 字幕 %@ 错误 %@", session.engine.currentTime,
                       session.engine.diagnostics().playbackType ?? "-", session.engine.nativeSubtitleDescription ?? "-",
                       session.errorMessage ?? "-")
-                await session.close()
+                session.close()
             }
             NSLog("playtest done")
         case "titletest":
             if let server, parts.count > 1 { await PlaybackProbe.run(server: server, limit: 1, title: parts[1]) }
+        case "switchtest":
+            for _ in 0..<60 where !model.servers.contains(where: { $0.catalog.contains { $0.kind == .series } }) {
+                try? await Task.sleep(for: .seconds(1))
+            }
+            let target = model.servers.first { $0.catalog.contains { $0.kind == .series } } ?? server
+            if let target { await PlaybackProbe.runSwitchTest(server: target) }
         case "tmdb":
             if parts.count > 2, let type = TMDBMediaType(rawValue: parts[1]), let id = Int(parts[2]) {
                 let ref = TMDBRef(type: type, id: id)
