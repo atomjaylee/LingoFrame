@@ -229,9 +229,9 @@ struct LearningPanel: View {
         .padding(.horizontal, 6)
         .padding(.bottom, 8)
         .frame(maxHeight: .infinity, alignment: .top)
-        // 和底部控制面板同一种深色半透明底（照 Infuse）。
-        .background(Color(white: 0.11).opacity(0.84), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color(white: 0.08).opacity(0.96))
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .leading) { Rectangle().fill(.white.opacity(0.1)).frame(width: 1) }
     }
 }
 

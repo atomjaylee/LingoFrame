@@ -51,6 +51,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     public private(set) var presentationSize: CGSize = .zero
     public private(set) var audioOptions: [TrackOption] = []
     public private(set) var selectedAudioID: Int?
+    public private(set) var subtitleOptions: [TrackOption] = []
+    public private(set) var selectedSubtitleID: Int?
     public private(set) var videoDescription: String?
     public private(set) var nativeSubtitlesVisible = true
     public private(set) var nativeSubtitleDescription: String?
@@ -122,6 +124,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         presentationSize = .zero
         audioOptions = []
         selectedAudioID = nil
+        subtitleOptions = []
+        selectedSubtitleID = nil
         videoDescription = nil
         nativeSubtitleDescription = nil
         didAutoSelectSubtitle = false
@@ -224,6 +228,18 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     public func selectAudio(_ id: Int) {
         setInt("aid", id)
         selectedAudioID = id
+    }
+
+    public func selectSubtitle(_ id: Int?) {
+        if let id {
+            setInt("sid", id)
+            selectedSubtitleID = id
+            setNativeSubtitlesVisible(true)
+        } else {
+            setString("sid", "no")
+            selectedSubtitleID = nil
+            setNativeSubtitlesVisible(false)
+        }
     }
 
     /// 学习层字幕尚未就绪时由 mpv 直接显示 ASS/PGS；文本字幕下载完成后切回可点击的自绘字幕。
@@ -458,7 +474,9 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         let count = getInt("track-list/count")
         var options: [TrackOption] = []
         var selected: Int?
+        var subtitles: [TrackOption] = []
         var firstSubtitleID: Int?
+        var selectedSubtitleID: Int?
         var selectedSubtitle: String?
         for index in 0..<count {
             let type = getString("track-list/\(index)/type")
@@ -470,7 +488,9 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
                 if getFlag("track-list/\(index)/selected") { selected = id }
             } else if type == "sub" {
                 firstSubtitleID = firstSubtitleID ?? id
+                subtitles.append(TrackOption(id: id, title: title ?? "字幕 \(subtitles.count + 1)", language: language))
                 if getFlag("track-list/\(index)/selected") { selectedSubtitle = title ?? "字幕 \(id)" }
+                if getFlag("track-list/\(index)/selected") { selectedSubtitleID = id }
             }
         }
         audioOptions = options
@@ -478,8 +498,11 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         if selectedSubtitle == nil, !didAutoSelectSubtitle, let firstSubtitleID {
             didAutoSelectSubtitle = true
             setInt("sid", firstSubtitleID)
+            selectedSubtitleID = firstSubtitleID
             selectedSubtitle = "字幕 \(firstSubtitleID)"
         }
+        subtitleOptions = subtitles
+        self.selectedSubtitleID = selectedSubtitleID
         nativeSubtitleDescription = selectedSubtitle
     }
 

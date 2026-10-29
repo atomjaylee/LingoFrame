@@ -55,7 +55,7 @@ private extension PlayRequest {
     }
 }
 
-/// 播放窗口，照设计稿「精听播放」：左边视频舞台（标题、双语字幕、浮动控制条），右边浮动的学习面板（剧本 / 分集 / 信息）。
+/// 播放窗口只承载视频；字幕与学习内容在独立窗口中显示，不改变主窗口尺寸。
 private struct PlayerScreen: View {
     let session: PlaybackSession
     @Environment(AppModel.self) private var model
@@ -68,25 +68,12 @@ private struct PlayerScreen: View {
     @State private var mouseInside = false
     @State private var overControls = false
     @State private var lookup: WordLookup?
-    @AppStorage("player.panelShown") private var panelShown = true
 
     var body: some View {
-        GeometryReader { geo in
-            let panelWidth: Double = panelShown && geo.size.width > 760 ? 350 : 0
-            ZStack(alignment: .topLeading) {
-                // 画面始终铺满整个窗口（窗口比例跟着视频走，没有黑边）；面板、字幕、控制条都浮在画面上。
-                Color.black
-                PlayerSurface(engine: session.engine)
-                stage
-                    .frame(width: geo.size.width - panelWidth, height: geo.size.height)
-                if panelWidth > 0 {
-                    LearningPanel(session: session, hide: { withAnimation(.easeOut(duration: 0.2)) { panelShown = false } })
-                        .frame(width: 340)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
-            }
+        ZStack {
+            Color.black
+            PlayerSurface(engine: session.engine)
+            stage
         }
         .ignoresSafeArea()
         .background(Color.black)
@@ -193,7 +180,7 @@ private struct PlayerScreen: View {
                 .opacity(controlsVisible ? 1 : 0)
                 .offset(y: controlsVisible ? 0 : -6)
                 Spacer(minLength: 0)
-                ControlBar(session: session, isScrubbing: $isScrubbing, panelShown: $panelShown, window: window)
+                ControlBar(session: session, isScrubbing: $isScrubbing, window: window)
                     .onHover {
                         overControls = $0
                         if $0 { hideTask?.cancel() } else { scheduleHide(after: 0.7) }
@@ -338,8 +325,8 @@ private struct CloseButton: View {
 private struct ControlBar: View {
     let session: PlaybackSession
     @Binding var isScrubbing: Bool
-    @Binding var panelShown: Bool
     let window: NSWindow?
+    @Environment(\.openWindow) private var openWindow
 
     private var engine: MPVPlayerEngine { session.engine }
 
@@ -381,13 +368,13 @@ private struct ControlBar: View {
                 }
                 HStack(spacing: 10) {
                     Spacer()
+                    if !engine.subtitleOptions.isEmpty { subtitleTrackMenu }
+                    if engine.audioOptions.count > 1 { audioTrackMenu }
                     settingsMenu
                     icon(window?.styleMask.contains(.fullScreen) == true ? "arrow.down.right.and.arrow.up.left"
                          : "arrow.up.left.and.arrow.down.right", size: 16, label: "全屏（双击画面）") { window?.toggleFullScreen(nil) }
-                    PlayerControlButton(systemName: "list.bullet", size: 17,
-                                        label: panelShown ? "收起字幕栏" : "显示字幕栏",
-                                        foreground: panelShown ? Color(red: 1, green: 0.68, blue: 0.03) : .white) {
-                        withAnimation(.easeOut(duration: 0.2)) { panelShown.toggle() }
+                    PlayerControlButton(systemName: "list.bullet", size: 17, label: "打开字幕窗口") {
+                        openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                     }
                 }
             }
@@ -415,18 +402,6 @@ private struct ControlBar: View {
                     }
                 }
             }
-            if engine.audioOptions.count > 1 {
-                Menu("音轨") {
-                    ForEach(engine.audioOptions) { option in
-                        Button {
-                            engine.selectAudio(option.id)
-                        } label: {
-                            if option.id == engine.selectedAudioID { Label(option.title, systemImage: "checkmark") }
-                            else { Text(option.title) }
-                        }
-                    }
-                }
-            }
         } label: {
             HoverControlIcon(systemName: "gearshape.fill", size: 17)
         }
@@ -434,7 +409,50 @@ private struct ControlBar: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("播放速度和音轨（[ 和 ] 调速度）")
+        .help("播放速度（[ 和 ] 调速度）")
+    }
+
+    private var audioTrackMenu: some View {
+        Menu {
+            ForEach(engine.audioOptions) { option in
+                Button {
+                    engine.selectAudio(option.id)
+                } label: {
+                    if option.id == engine.selectedAudioID { Label(option.title, systemImage: "checkmark") }
+                    else { Text(option.title) }
+                }
+            }
+        } label: {
+            HoverControlIcon(systemName: "speaker.wave.2.fill", size: 16)
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help("选择音轨")
+        .accessibilityLabel("选择音轨")
+    }
+
+    private var subtitleTrackMenu: some View {
+        Menu {
+            Button {
+                session.selectPlaybackSubtitle(nil)
+            } label: {
+                if engine.selectedSubtitleID == nil { Label("关闭", systemImage: "checkmark") }
+                else { Text("关闭") }
+            }
+            Divider()
+            ForEach(engine.subtitleOptions) { option in
+                Button {
+                    session.selectPlaybackSubtitle(option.id)
+                } label: {
+                    if option.id == engine.selectedSubtitleID { Label(option.title, systemImage: "checkmark") }
+                    else { Text(option.title) }
+                }
+            }
+        } label: {
+            HoverControlIcon(systemName: "captions.bubble.fill", size: 16)
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help("选择字幕")
+        .accessibilityLabel("选择字幕")
     }
 
 }

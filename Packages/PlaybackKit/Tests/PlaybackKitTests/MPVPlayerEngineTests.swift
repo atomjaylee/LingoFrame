@@ -56,6 +56,29 @@ private func makeTestMKV(duration: Int = 6) throws -> URL {
     return url
 }
 
+private func makeMultiTrackMKV() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("elenglish-tracks-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let subtitle = directory.appendingPathComponent("subtitle.srt")
+    try "1\n00:00:00,000 --> 00:00:02,000\nHello\n".write(to: subtitle, atomically: true, encoding: .utf8)
+    let url = directory.appendingPathComponent("tracks.mkv")
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: ffmpeg)
+    process.arguments = [
+        "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+        "-f", "lavfi", "-i", "sine=frequency=660:sample_rate=48000", "-i", subtitle.path,
+        "-t", "3", "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s",
+        "-c:v", "h264_videotoolbox", "-b:v", "1M", "-c:a", "aac", "-c:s", "srt",
+        "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=zho",
+        "-metadata:s:s:0", "language=eng", url.path,
+    ]
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
+    return url
+}
+
 @MainActor
 private func waitUntil(timeout: Double = 10, _ condition: () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(timeout)
@@ -132,6 +155,25 @@ struct MPVPlayerEngineTests {
         try await waitUntil { engine.state == .paused && abs(engine.duration - 4) < 0.3 }
         try await Task.sleep(for: .milliseconds(200))
         #expect(engine.state == .paused)
+        engine.stop()
+    }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
+    func exposesAndSelectsAudioAndSubtitleTracks() async throws {
+        let source = try makeMultiTrackMKV()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let engine = MPVPlayerEngine(headless: true)
+        engine.load(url: source, autoplay: false)
+        try await waitUntil { engine.state == .paused && engine.audioOptions.count == 2 && engine.subtitleOptions.count == 1 }
+        let secondAudio = engine.audioOptions[1].id
+        engine.selectAudio(secondAudio)
+        #expect(engine.selectedAudioID == secondAudio)
+        let subtitle = engine.subtitleOptions[0].id
+        engine.selectSubtitle(subtitle)
+        #expect(engine.selectedSubtitleID == subtitle)
+        engine.selectSubtitle(nil)
+        #expect(engine.selectedSubtitleID == nil)
         engine.stop()
     }
 

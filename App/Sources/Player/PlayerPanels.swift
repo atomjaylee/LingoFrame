@@ -1,3 +1,4 @@
+import AppKit
 import DesignSystem
 import MediaServerKit
 import PlaybackKit
@@ -8,12 +9,46 @@ import Workspace
 enum PlayerPanels {
     @MainActor
     static func register(in registry: PanelRegistry) {
+        registry.register(PanelDescriptor(id: PanelIDs.transcript, title: "字幕与学习", systemImage: "captions.bubble",
+                                          defaultPlacement: .floating) { TranscriptFloatingPanel() })
         registry.register(PanelDescriptor(id: PanelIDs.episodes, title: "分集", systemImage: "list.bullet.rectangle",
                                           defaultPlacement: .trailing) { EpisodesPanel() })
         registry.register(PanelDescriptor(id: PanelIDs.mediaInfo, title: "媒体信息", systemImage: "info.circle",
                                           defaultPlacement: .trailing) { MediaInfoPanel() })
         registry.register(PanelDescriptor(id: PanelIDs.playbackDebug, title: "播放诊断", systemImage: "waveform.path.ecg",
                                           defaultPlacement: .bottom) { PlaybackDebugPanel() })
+    }
+}
+
+private struct TranscriptFloatingPanel: View {
+    @Environment(PlaybackSession.self) private var session: PlaybackSession?
+    @Environment(\.dismissWindow) private var dismissWindow
+    @State private var positioned = false
+
+    var body: some View {
+        Group {
+            if let session {
+                LearningPanel(session: session) {
+                    dismissWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
+                }
+                .background(WindowAccessor { position($0, beside: session.windowTitle) })
+            } else {
+                NoSessionView()
+            }
+        }
+    }
+
+    private func position(_ panel: NSWindow?, beside playerTitle: String) {
+        guard !positioned, let panel,
+              let player = NSApp.windows.first(where: { $0 !== panel && $0.title == playerTitle }),
+              let visible = player.screen?.visibleFrame else { return }
+        positioned = true
+        let gap: Double = 8
+        let panelY = min(player.frame.maxY - panel.frame.height, visible.maxY - panel.frame.height)
+        let rightX = player.frame.maxX + gap
+        let leftX = player.frame.minX - gap - panel.frame.width
+        let panelX = rightX + panel.frame.width <= visible.maxX ? rightX : max(visible.minX, leftX)
+        panel.setFrameOrigin(CGPoint(x: panelX, y: max(visible.minY, panelY)))
     }
 }
 

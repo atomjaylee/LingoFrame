@@ -184,6 +184,11 @@ final class AppModel {
                 url: stream.url,
                 size: stream.mediaSource.size,
                 fileExtension: stream.mediaSource.container)
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, generation == self.preparationGeneration, self.activeSession == nil else { return }
+                await PlaybackSession.prefetchSubtitles(client: client, itemID: item.id, source: stream.mediaSource)
+            }
             playbackEngine.load(url: stream.url, startAt: start, autoplay: false, durationHint: duration,
                                 preload: true, cachedSource: cachedSource)
         } catch is CancellationError {

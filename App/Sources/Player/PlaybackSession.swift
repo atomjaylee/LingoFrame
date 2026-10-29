@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import LearningCore
 import MediaServerKit
@@ -9,6 +10,26 @@ import PlaybackKit
 enum PlayRequest: Codable, Hashable {
     case emby(serverID: String, itemID: String, resume: Bool)
     case local(URL)
+}
+
+private actor SubtitleCueCache {
+    static let shared = SubtitleCueCache()
+    private var inFlight: [URL: Task<[SubtitleCue]?, Never>] = [:]
+
+    func cues(file: URL, loader: @escaping @Sendable () async -> String?) async -> [SubtitleCue]? {
+        if let text = try? String(contentsOf: file, encoding: .utf8) { return SubtitleParser.parse(text) }
+        if let task = inFlight[file] { return await task.value }
+        let task = Task { () -> [SubtitleCue]? in
+            guard let text = await loader() else { return nil }
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? text.write(to: file, atomically: true, encoding: .utf8)
+            return SubtitleParser.parse(text)
+        }
+        inFlight[file] = task
+        let result = await task.value
+        inFlight[file] = nil
+        return result
+    }
 }
 
 /// 一个播放窗口的会话：把 Emby 条目解析成播放地址，交给播放内核，并向 Emby 上报播放进度。
@@ -273,15 +294,7 @@ final class PlaybackSession {
     /// 自动挑字幕：文本字幕由 Emby 在后台导出，不阻塞 libmpv 首帧；图形字幕交给 mpv 播放但不参与逐句学习。
     private func loadSubtitles(itemID: String, source: MediaSourceInfo) {
         engine.setNativeSubtitlesVisible(true)
-        let textCodecs: Set<String> = ["srt", "subrip", "ass", "ssa", "vtt", "webvtt", "mov_text", "tx3g"]
-        let options: [SubtitleOption] = source.subtitleStreams.compactMap { s in
-            guard let index = s.index, s.isForced != true else { return nil }
-            let codec = s.codec?.lowercased() ?? ""
-            let isText = s.isTextSubtitleStream ?? textCodecs.contains(codec)
-            guard isText else { return nil }
-            return SubtitleOption(id: index, title: s.displayTitle ?? s.title ?? s.language ?? "字幕 \(index)",
-                                  language: s.language, isText: true, isForced: false)
-        }
+        let options = Self.textSubtitleOptions(from: source)
         subtitleOptions = options
         func pick(_ english: Bool) -> SubtitleOption? {
             let pool = options.filter { english ? $0.isEnglish : $0.isChinese }
@@ -311,6 +324,35 @@ final class PlaybackSession {
         selectSubtitles(primary: primarySubtitle, secondary: option, itemID: item.id, sourceID: stream.mediaSource.id)
     }
 
+    func selectPlaybackSubtitle(_ id: Int?) {
+        engine.selectSubtitle(id)
+        guard let id, let track = engine.subtitleOptions.first(where: { $0.id == id }) else {
+            subtitleTask?.cancel()
+            primaryCues = []
+            secondaryCues = []
+            subtitleMode = .off
+            subtitleNote = "字幕已关闭"
+            return
+        }
+        if subtitleMode == .off { subtitleMode = .primaryOnly }
+        let language = track.language?.lowercased()
+        let learningTrack = subtitleOptions.first { option in
+            if let language { return option.language?.lowercased() == language }
+            return option.title.localizedCaseInsensitiveContains(track.title)
+        }
+        guard let learningTrack, let item, let stream else {
+            subtitleTask?.cancel()
+            primaryCues = []
+            secondaryCues = []
+            subtitleNote = "播放器字幕已切换，学习字幕暂不可用"
+            engine.setNativeSubtitlesVisible(true)
+            return
+        }
+        subtitleNote = "播放器字幕已切换，正在准备学习字幕…"
+        selectSubtitles(primary: learningTrack, secondary: secondarySubtitle,
+                        itemID: item.id, sourceID: stream.mediaSource.id)
+    }
+
     private func selectSubtitles(primary: SubtitleOption?, secondary: SubtitleOption?, itemID: String, sourceID: String) {
         primarySubtitle = primary
         secondarySubtitle = secondary
@@ -336,13 +378,38 @@ final class PlaybackSession {
     private nonisolated static func fetchCues(_ client: EmbyClient, _ itemID: String, _ sourceID: String,
                                               _ option: SubtitleOption?) async -> [SubtitleCue]? {
         guard let option else { return [] }
-        guard let text = try? await client.subtitleText(itemID: itemID, mediaSourceID: sourceID, streamIndex: option.id)
-        else { return nil }
-        let cues = SubtitleParser.parse(text)
-        #if DEBUG
-        NSLog("字幕 %@ 文本 %ld 字 解析 %ld 条 开头：%@", option.title, text.count, cues.count, String(text.prefix(160)))
-        #endif
-        return cues
+        let file = subtitleCacheFile(itemID: itemID, sourceID: sourceID, streamIndex: option.id)
+        return await SubtitleCueCache.shared.cues(file: file) {
+            try? await client.subtitleText(itemID: itemID, mediaSourceID: sourceID, streamIndex: option.id)
+        }
+    }
+
+    nonisolated static func prefetchSubtitles(client: EmbyClient, itemID: String, source: MediaSourceInfo) async {
+        let options = textSubtitleOptions(from: source)
+        let english = options.first { $0.isEnglish }
+        let chinese = options.first { $0.isChinese }
+        async let primary = fetchCues(client, itemID, source.id, english ?? options.first)
+        async let secondary = fetchCues(client, itemID, source.id, chinese)
+        _ = await (primary, secondary)
+    }
+
+    private nonisolated static func textSubtitleOptions(from source: MediaSourceInfo) -> [SubtitleOption] {
+        let textCodecs: Set<String> = ["srt", "subrip", "ass", "ssa", "vtt", "webvtt", "mov_text", "tx3g"]
+        return source.subtitleStreams.compactMap { stream in
+            guard let index = stream.index, stream.isForced != true else { return nil }
+            let codec = stream.codec?.lowercased() ?? ""
+            guard stream.isTextSubtitleStream ?? textCodecs.contains(codec) else { return nil }
+            return SubtitleOption(id: index, title: stream.displayTitle ?? stream.title ?? stream.language ?? "字幕 \(index)",
+                                  language: stream.language, isText: true, isForced: false)
+        }
+    }
+
+    private nonisolated static func subtitleCacheFile(itemID: String, sourceID: String, streamIndex: Int) -> URL {
+        let key = "\(itemID)|\(sourceID)|\(streamIndex)"
+        let name = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined() + ".srt"
+        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ELEnglish/Subtitles", isDirectory: true)
+            .appendingPathComponent(name)
     }
 
     // MARK: 句子
@@ -559,7 +626,7 @@ final class PlaybackSession {
 }
 
 /// 一条可选的字幕轨。
-struct SubtitleOption: Identifiable, Hashable {
+struct SubtitleOption: Identifiable, Hashable, Sendable {
     /// 片源里的流序号。
     let id: Int
     let title: String
