@@ -157,6 +157,9 @@ final class PlaybackSession {
             }
         } catch {
             errorMessage = error.localizedDescription
+            if siblings.isEmpty, let item, item.kind == .episode, let seriesID = item.seriesId {
+                siblings = (try? await client.episodes(of: seriesID, season: item.seasonId)) ?? []
+            }
         }
     }
 

@@ -109,6 +109,25 @@ struct MPVPlayerEngineTests {
     }
 
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
+    func replacingFileIgnoresStoppedEndEvent() async throws {
+        let first = try makeTestMKV(duration: 3)
+        let second = try makeTestMKV(duration: 4)
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+
+        let engine = MPVPlayerEngine(headless: true)
+        engine.load(url: first, autoplay: false)
+        try await waitUntil { engine.state == .paused }
+        engine.load(url: second, autoplay: false)
+        try await waitUntil { engine.state == .paused && abs(engine.duration - 4) < 0.3 }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(engine.state == .paused)
+        engine.stop()
+    }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
     func cachedRemoteMKVUsesCustomByteStream() async throws {
         let source = try makeTestMKV(duration: 3)
         defer { try? FileManager.default.removeItem(at: source) }

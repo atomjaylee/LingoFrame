@@ -386,15 +386,16 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     }
 
     private func endFile(_ data: UnsafeMutableRawPointer?) {
-        guard let data else { state = .ended; return }
+        guard let data else { return }
         let event = data.assumingMemoryBound(to: mpv_event_end_file.self).pointee
         if event.reason == MPV_END_FILE_REASON_ERROR {
             let message = String(cString: mpv_error_string(event.error))
             lastError = message
             state = .failed(message)
-        } else if loadedURL != nil {
+        } else if event.reason == MPV_END_FILE_REASON_EOF, loadedURL != nil {
             state = .ended
         }
+        // loadfile replace 和主动 stop 都会产生 STOP；它不是当前文件播放完毕，不能展示“下一集”。
     }
 
     private func reloadPresentationInfo() {

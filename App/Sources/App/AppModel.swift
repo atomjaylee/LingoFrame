@@ -100,6 +100,7 @@ final class AppModel {
     var playRequest: PlayRequest?
     var playRequestRevision: UInt64 = 0
     @ObservationIgnored private var preparedPlayback: PreparedPlayback?
+    @ObservationIgnored private var preparationGeneration: UInt64 = 0
 
     @ObservationIgnored private let accountStore: AccountStore
     @ObservationIgnored private let tmdbSecret: any SecretStore
@@ -165,11 +166,14 @@ final class AppModel {
     /// 详情页后台预热：并行读取条目和播放信息，然后让唯一的 libmpv 内核暂停在首帧。
     func preparePlayback(serverID: String, itemID: String) async {
         guard activeSession == nil, let client = server(serverID)?.client else { return }
+        preparationGeneration &+= 1
+        let generation = preparationGeneration
         do {
             async let itemRequest = client.item(itemID)
             async let infoRequest = client.playbackInfo(itemID: itemID, profile: .libmpv)
             let (item, info) = try await (itemRequest, infoRequest)
             try Task.checkCancellation()
+            guard activeSession == nil, generation == preparationGeneration else { return }
             let stream = try client.resolveOriginalStream(itemID: itemID, info: info)
             let start = item.resumePositionSeconds
             let duration = item.runTimeTicks.map { Double($0) / 10_000_000 }
@@ -200,6 +204,8 @@ final class AppModel {
     }
 
     func showPlayer(_ request: PlayRequest, using openWindow: OpenWindowAction) {
+        // 详情页预热请求可能还在网络途中；先失效，避免它回来后覆盖用户刚点开的集数。
+        preparationGeneration &+= 1
         playRequest = request
         playRequestRevision &+= 1
         openWindow(id: PlayerWindow.id)

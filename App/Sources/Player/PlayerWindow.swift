@@ -165,6 +165,12 @@ private struct PlayerScreen: View {
                     .transition(.opacity)
                     .allowsHitTesting(false)
             }
+            LinearGradient(colors: [.clear, .black.opacity(0.18), .black.opacity(0.72)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 220)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .opacity(controlsVisible ? 1 : 0)
+                .allowsHitTesting(false)
             SubtitleOverlay(session: session, lookup: $lookup)
                 .padding(.horizontal, 64)
                 .frame(maxHeight: .infinity, alignment: .bottom)
@@ -189,16 +195,18 @@ private struct PlayerScreen: View {
                 .offset(y: controlsVisible ? 0 : -6)
                 Spacer(minLength: 0)
                 ControlBar(session: session, isScrubbing: $isScrubbing, panelShown: $panelShown, window: window)
-                    .onHover { overControls = $0; if $0 { poke() } }
-                    .padding(.bottom, 16)
+                    .onHover {
+                        overControls = $0
+                        if $0 { hideTask?.cancel() } else { scheduleHide(after: 0.7) }
+                    }
+                    .padding(.bottom, 10)
                     .opacity(controlsVisible ? 1 : 0)
-                    .offset(y: controlsVisible ? 0 : 14)
-                    .scaleEffect(controlsVisible ? 1 : 0.985, anchor: .bottom)
+                    .offset(y: controlsVisible ? 0 : 10)
             }
             .allowsHitTesting(controlsVisible)
         }
         .foregroundStyle(.white)
-        .animation(.easeInOut(duration: controlsVisible ? 0.18 : 0.32), value: controlsVisible)
+        .animation(.easeOut(duration: 0.16), value: controlsVisible)
         .animation(.easeOut(duration: 0.15), value: session.hud)
         .animation(.easeOut(duration: 0.15), value: lookup)
         .contentShape(Rectangle())
@@ -210,16 +218,16 @@ private struct PlayerScreen: View {
             case .ended:
                 // 鼠标移出画面：控制条淡出（正在拖进度条或查词时保留）。
                 mouseInside = false
-                scheduleHide(after: 0.25)
+                scheduleHide(after: 0.12)
             }
         }
     }
 
-    /// 鼠标在画面上移动或按了快捷键：显示控制条，2.5 秒没动静再淡出。
+    /// 鼠标在画面上移动或按了快捷键：显示控制条，1.1 秒没动静再淡出。
     /// 鼠标停在控制面板上时不隐藏；暂停时只要鼠标还在画面上也不隐藏。字幕一直显示。
     private func poke() {
         if !controlsVisible { controlsVisible = true }
-        scheduleHide(after: 2.5)
+        scheduleHide(after: 1.1)
     }
 
     private func scheduleHide(after seconds: Double) {
@@ -255,6 +263,12 @@ private struct StatusOverlay: View {
                 Button { Task { await session.retry() } } label: { Text("重试").frame(minWidth: 160) }
                     .buttonStyle(RexPrimaryButtonStyle())
                     .padding(.top, theme.metrics.space(2))
+                if let next = session.nextItem {
+                    Button { Task { await session.play(itemID: next.id, resume: false) } } label: {
+                        Label("播放下一集", systemImage: "forward.end.fill").frame(minWidth: 160)
+                    }
+                    .buttonStyle(RexTextButtonStyle())
+                }
             }
         } else if state == .loading || state == .idle {
             ProgressView().controlSize(.large).tint(.white)
@@ -321,8 +335,7 @@ private struct CloseButton: View {
 
 // MARK: - 控制面板
 
-/// 底部居中的深色面板（参考 Infuse），只管视频播放：上一行左边音量、中间上一集 / 后退 10 秒 / 播放 / 前进 10 秒 / 下一集、
-/// 右边设置 / 全屏 / 字幕栏开关；下一行已播时间、进度条、剩余时间。逐句、循环等学习控制都在右侧字幕栏里。
+/// Infuse 式底部控制层：进度在上、操作在下，浮在渐变遮罩上，不再使用厚重的悬浮卡片。
 private struct ControlBar: View {
     let session: PlaybackSession
     @Binding var isScrubbing: Bool
@@ -332,30 +345,34 @@ private struct ControlBar: View {
     private var engine: MPVPlayerEngine { session.engine }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
+            HStack(spacing: 14) {
+                TimeText(engine: engine, remaining: false)
+                Scrubber(engine: engine, isScrubbing: $isScrubbing)
+                TimeText(engine: engine, remaining: true)
+            }
             ZStack {
-                HStack(spacing: 8) {
-                    Button { session.toggleMute() } label: {
-                        Image(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                            .font(.system(size: 15)).frame(width: 22)
+                HStack(spacing: 6) {
+                    PlayerControlButton(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                                        size: 16, label: engine.isMuted ? "取消静音" : "静音") {
+                        session.toggleMute()
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(engine.isMuted ? "取消静音" : "静音")
                     ThinSlider(value: Binding(get: { engine.isMuted ? 0 : Double(engine.volume) },
                                               set: { engine.volume = Float($0); engine.isMuted = false }))
-                        .frame(width: 118)
+                        .frame(width: 120)
                         .accessibilityLabel("音量")
                     Spacer()
                 }
-                HStack(spacing: 22) {
+                HStack(spacing: 14) {
                     icon("backward.end.fill", size: 17, label: "上一集") {
                         if let prev = session.previousItem { Task { await session.play(itemID: prev.id, resume: true) } }
                     }
                     .disabled(session.previousItem == nil)
                     .opacity(session.previousItem == nil ? 0.35 : 1)
                     icon("gobackward.10", size: 20, label: "后退 10 秒（⇧←）") { session.seek(by: -10) }
-                    icon(engine.state == .playing ? "pause.fill" : "play.fill", size: 24,
-                         label: engine.state == .playing ? "暂停（空格）" : "播放（空格）") { session.togglePlay() }
+                    PlayerControlButton(systemName: engine.state == .playing ? "pause.fill" : "play.fill", size: 22,
+                                        label: engine.state == .playing ? "暂停（空格）" : "播放（空格）",
+                                        prominent: true) { session.togglePlay() }
                     icon("goforward.10", size: 20, label: "前进 10 秒（⇧→）") { session.seek(by: 10) }
                     icon("forward.end.fill", size: 17, label: "下一集") {
                         if let next = session.nextItem { Task { await session.play(itemID: next.id, resume: true) } }
@@ -363,43 +380,27 @@ private struct ControlBar: View {
                     .disabled(session.nextItem == nil)
                     .opacity(session.nextItem == nil ? 0.35 : 1)
                 }
-                HStack(spacing: 18) {
+                HStack(spacing: 10) {
                     Spacer()
                     settingsMenu
                     icon(window?.styleMask.contains(.fullScreen) == true ? "arrow.down.right.and.arrow.up.left"
                          : "arrow.up.left.and.arrow.down.right", size: 16, label: "全屏（双击画面）") { window?.toggleFullScreen(nil) }
-                    Button { withAnimation(.easeOut(duration: 0.2)) { panelShown.toggle() } } label: {
-                        Image(systemName: "list.bullet").font(.system(size: 17, weight: .medium))
-                            .foregroundStyle(panelShown ? Color(red: 1, green: 0.68, blue: 0.03) : .white)
-                            .frame(width: 26, height: 26).contentShape(Rectangle())
+                    PlayerControlButton(systemName: "list.bullet", size: 17,
+                                        label: panelShown ? "收起字幕栏" : "显示字幕栏",
+                                        foreground: panelShown ? Color(red: 1, green: 0.68, blue: 0.03) : .white) {
+                        withAnimation(.easeOut(duration: 0.2)) { panelShown.toggle() }
                     }
-                    .buttonStyle(.plain)
-                    .help(panelShown ? "收起字幕栏" : "显示字幕栏")
                 }
-            }
-            HStack(spacing: 14) {
-                TimeText(engine: engine, remaining: false)
-                Scrubber(engine: engine, isScrubbing: $isScrubbing)
-                TimeText(engine: engine, remaining: true)
             }
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 18)
-        .padding(.top, 12)
-        .padding(.bottom, 11)
-        .frame(width: 620)
-        .background(Color(white: 0.11).opacity(0.84), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, 30)
+        .padding(.bottom, 4)
+        .frame(maxWidth: 980)
     }
 
     private func icon(_ name: String, size: Double, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: name).font(.system(size: size, weight: .medium))
-                .frame(width: max(28, size + 6), height: 28).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(label)
-        .accessibilityLabel(label)
+        PlayerControlButton(systemName: name, size: size, label: label, action: action)
     }
 
     /// 设置：播放速度、音轨。
@@ -428,7 +429,7 @@ private struct ControlBar: View {
                 }
             }
         } label: {
-            Image(systemName: "gearshape.fill").font(.system(size: 17))
+            HoverControlIcon(systemName: "gearshape.fill", size: 17)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -437,6 +438,51 @@ private struct ControlBar: View {
         .help("播放速度和音轨（[ 和 ] 调速度）")
     }
 
+}
+
+private struct PlayerControlButton: View {
+    let systemName: String
+    let size: Double
+    let label: String
+    var prominent = false
+    var foreground: Color = .white
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(foreground)
+                .frame(width: prominent ? 42 : 34, height: prominent ? 42 : 34)
+                .background(.white.opacity(hovering ? 0.2 : prominent ? 0.1 : 0), in: Circle())
+                .contentShape(Circle())
+                .scaleEffect(hovering ? 1.06 : 1)
+                .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.1), value: hovering)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
+
+private struct HoverControlIcon: View {
+    let systemName: String
+    let size: Double
+    @State private var hovering = false
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: size, weight: .semibold))
+            .frame(width: 34, height: 34)
+            .background(.white.opacity(hovering ? 0.2 : 0), in: Circle())
+            .contentShape(Circle())
+            .scaleEffect(hovering ? 1.06 : 1)
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.1), value: hovering)
+    }
 }
 
 /// 细滑块：4 点高的轨道 + 16 点白色圆点，用于音量。
