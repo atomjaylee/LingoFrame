@@ -5,11 +5,13 @@ import Testing
 
 private final class RangeProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var bytes = Data()
+    nonisolated(unsafe) static var requestCount = 0
 
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "cache.test" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        Self.requestCount += 1
         let total = Self.bytes.count
         let range = request.value(forHTTPHeaderField: "Range") ?? "bytes=0-\(max(total - 1, 0))"
         let values = range.dropFirst(6).split(separator: "-", maxSplits: 1)
@@ -62,6 +64,9 @@ struct MPVPlayerEngineTests {
         let engine = MPVPlayerEngine()
         #expect(engine.surface.wantsLayer)
         #expect(engine.surface.layer === engine.surface.metalLayer)
+        #expect(engine.nativeSubtitlesVisible)
+        engine.setNativeSubtitlesVisible(false)
+        #expect(!engine.nativeSubtitlesVisible)
     }
 
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
@@ -99,6 +104,7 @@ struct MPVPlayerEngineTests {
         let source = try makeTestMKV(duration: 3)
         defer { try? FileManager.default.removeItem(at: source) }
         RangeProtocol.bytes = try Data(contentsOf: source)
+        RangeProtocol.requestCount = 0
         MediaCacheTesting.protocolClasses = [RangeProtocol.self]
         defer { MediaCacheTesting.protocolClasses = nil }
 
@@ -109,6 +115,13 @@ struct MPVPlayerEngineTests {
         engine.load(url: remote, autoplay: false, cachedSource: descriptor)
         try await waitUntil { engine.state == .paused && engine.duration > 0 }
         #expect(abs(engine.duration - 3) < 0.3)
+        await engine.seek(to: 1.8, exact: true)
+        #expect(abs(engine.currentTime - 1.8) < 0.4)
+        #expect(RangeProtocol.requestCount <= 3)
+        engine.stop()
+        engine.load(url: remote, autoplay: false, cachedSource: descriptor)
+        try await waitUntil { engine.state == .paused && engine.duration > 0 }
+        #expect(RangeProtocol.requestCount <= 4)
         engine.stop()
     }
 }

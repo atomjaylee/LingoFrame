@@ -90,7 +90,7 @@ struct HomeView: View {
         return HeroInfoPanel(title: title, meta: HeroMeta.parts(title, isSeries: title.ref.type == .tv),
                              rating: title.voteAverage, level: entry.level, note: entry.reason, overview: title.overview) {
             if let match, title.ref.type == .movie {
-                Button { PlayAction(openWindow: openWindow, serverID: match.serverID)(match.item) } label: {
+                Button { PlayAction(openWindow: openWindow, model: model, serverID: match.serverID)(match.item) } label: {
                     PillLabel(match.item.resumePositionSeconds == nil ? "播放" : "继续播放")
                 }
                 .buttonStyle(RexPillButtonStyle())

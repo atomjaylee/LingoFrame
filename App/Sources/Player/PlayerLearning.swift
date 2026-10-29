@@ -419,6 +419,7 @@ private struct PlaybackInfoList: View {
                         if let a = PlaybackSession.defaultAudio(of: source) { row("音频", a.displayTitle ?? a.codec ?? "-") }
                     }
                     if let d = session.engine.videoDescription { row("解码", d) }
+                    if let subtitle = session.engine.nativeSubtitleDescription { row("播放器字幕", subtitle) }
                 }
             }
             .font(.system(size: 13))

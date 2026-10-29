@@ -21,185 +21,468 @@ public struct CachedMediaSource: Sendable {
     }
 }
 
-/// libmpv 自定义协议的注册表。播放地址变化时替换源信息，磁盘块仍按稳定 cacheKey 复用。
+/// libmpv 自定义协议的注册表。一个媒体源只保留一条连续上游连接，跳转时才重新发 Range 请求。
 final class MPVStreamRegistry: @unchecked Sendable {
+    private static let globalLimit: Int64 = 20 * 1024 * 1024 * 1024
     private let lock = NSLock()
-    private var sources: [String: PersistentMediaSource] = [:]
+    private var sources: [String: ContinuousMediaSource] = [:]
     private let root: URL
 
     init() {
         root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ELEnglish/Media", isDirectory: true)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        Self.removeLegacyBlockCache(from: root)
     }
 
     func register(_ descriptor: CachedMediaSource) -> URL {
         let token = Self.token(for: descriptor.cacheKey)
+        let directory = root.appendingPathComponent(token, isDirectory: true)
         lock.lock()
         if let source = sources[token] {
             source.update(url: descriptor.url, size: descriptor.size)
         } else {
-            sources[token] = PersistentMediaSource(descriptor: descriptor,
-                                                   directory: root.appendingPathComponent(token, isDirectory: true))
+            sources[token] = ContinuousMediaSource(descriptor: descriptor, directory: directory)
         }
         lock.unlock()
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: directory.path)
+        let root = root
+        DispatchQueue.global(qos: .utility).async {
+            Self.pruneGlobalCache(root: root, excluding: token)
+        }
         let ext = descriptor.fileExtension?.trimmingCharacters(in: CharacterSet(charactersIn: ".")) ?? "media"
         return URL(string: "elcache://\(token)/source.\(ext)")!
     }
 
-    fileprivate func source(for uri: String) -> PersistentMediaSource? {
+    fileprivate func source(for uri: String) -> ContinuousMediaSource? {
         guard let url = URL(string: uri), let token = url.host else { return nil }
-        return lock.withLock { sources[token] }
+        return lock.withLock {
+            sources[token]?.prepareForOpen()
+            return sources[token]
+        }
     }
 
     private static func token(for key: String) -> String {
         SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
     }
+
+    private static func pruneGlobalCache(root: URL, excluding activeToken: String) {
+        let manager = FileManager.default
+        guard let directories = try? manager.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]) else { return }
+        var entries: [(url: URL, date: Date, size: Int64)] = directories.compactMap { directory in
+            guard directory.lastPathComponent != activeToken else { return nil }
+            let date = (try? directory.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return (directory, date, allocatedSize(of: directory))
+        }
+        var total = entries.reduce(Int64(0)) { $0 + $1.size }
+        guard total > globalLimit else { return }
+        entries.sort { $0.date < $1.date }
+        for entry in entries where total > globalLimit * 9 / 10 {
+            try? manager.removeItem(at: entry.url)
+            total -= entry.size
+        }
+    }
+
+    private static func allocatedSize(of directory: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey],
+            options: [.skipsHiddenFiles]) else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in enumerator {
+            let values = try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey])
+            total += Int64(values?.totalFileAllocatedSize ?? values?.fileAllocatedSize ?? 0)
+        }
+        return total
+    }
+
+    /// v1 的 2MB 独立请求缓存不能复用，并会绕过新限额；升级时只删除这些可再生缓存块。
+    private static func removeLegacyBlockCache(from root: URL) {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else { return }
+        for case let file as URL in enumerator where file.pathExtension == "block" {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
 }
 
-private final class PersistentMediaSource: @unchecked Sendable {
-    private static let blockSize = 2 * 1024 * 1024
-    private let lock = NSLock()
+private struct CachedRange {
+    var start: Int64
+    var length: Int64
+    var file: URL
+    var end: Int64 { start + length }
+}
+
+/// 持久缓存的一个 64MB 文件段。网络连接不切断，只在磁盘上滚动分段，便于限额和回收。
+private final class SegmentWriter {
+    static let limit: Int64 = 64 * 1024 * 1024
+    let start: Int64
+    let file: URL
+    private let handle: FileHandle
+    private(set) var length: Int64 = 0
+
+    init(start: Int64, directory: URL) throws {
+        self.start = start
+        file = directory.appendingPathComponent("segment-\(start)-\(UUID().uuidString).range")
+        FileManager.default.createFile(atPath: file.path, contents: nil)
+        handle = try FileHandle(forWritingTo: file)
+    }
+
+    func append(_ data: Data) throws -> Int {
+        let count = min(data.count, Int(Self.limit - length))
+        guard count > 0 else { return 0 }
+        try handle.write(contentsOf: data.prefix(count))
+        length += Int64(count)
+        return count
+    }
+
+    var isFull: Bool { length >= Self.limit }
+    func close() { try? handle.close() }
+    deinit { close() }
+}
+
+/// 单连接连续读取器：URLSession 持续收数据，libmpv 每次 read 都从已落盘范围直接返回。
+private final class ContinuousMediaSource: @unchecked Sendable {
+    private static let maximumAhead: Int64 = 16 * 1024 * 1024
+    private static let resumeAhead: Int64 = 8 * 1024 * 1024
+    private static let maximumBack: Int64 = 512 * 1024 * 1024
+    private static let perSourceLimit: Int64 = 4 * 1024 * 1024 * 1024
+
+    private let condition = NSCondition()
     private let directory: URL
     private var remoteURL: URL
+    private var redirectedURL: URL?
     private var knownSize: Int64?
+    private var ranges: [CachedRange] = []
+    private var writer: SegmentWriter?
+    private var request: ContinuousRequest?
+    private var generation: UInt64 = 0
+    private var requestStart: Int64 = 0
+    private var downloadedEnd: Int64 = 0
+    private var consumerOffset: Int64 = 0
+    private var eofOffset: Int64?
+    private var networkError: Error?
+    private var retryingOriginal = false
 
     init(descriptor: CachedMediaSource, directory: URL) {
         remoteURL = descriptor.url
         knownSize = descriptor.size
         self.directory = directory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        ranges = Self.loadRanges(from: directory)
     }
 
     func update(url: URL, size: Int64?) {
-        lock.withLock {
+        condition.withLock {
             remoteURL = url
             if let size { knownSize = size }
         }
     }
 
-    func size() -> Int64? { lock.withLock { knownSize } }
+    func size() -> Int64? { condition.withLock { knownSize } }
+
+    func prepareForOpen() {
+        condition.withLock { networkError = nil }
+    }
 
     func read(offset: Int64, count: Int) throws -> Data {
         guard offset >= 0, count > 0 else { return Data() }
-        return try lock.withLock {
-            if let knownSize, offset >= knownSize { return Data() }
-            var result = Data()
-            var cursor = offset
-            let requestedEnd = offset + Int64(count)
-            let finalEnd = min(requestedEnd, knownSize ?? requestedEnd)
-            while cursor < finalEnd {
-                let index = cursor / Int64(Self.blockSize)
-                let blockStart = index * Int64(Self.blockSize)
-                let block = try blockData(index: index, start: blockStart)
-                let inside = Int(cursor - blockStart)
-                guard inside < block.count else { break }
-                let take = min(block.count - inside, Int(finalEnd - cursor))
-                result.append(block.subdata(in: inside..<(inside + take)))
-                cursor += Int64(take)
+        condition.lock()
+        defer { condition.unlock() }
+        consumerOffset = offset
+        let deadline = Date().addingTimeInterval(30)
+        while true {
+            if let data = readCached(offset: offset, count: count), !data.isEmpty {
+                consumerOffset = offset + Int64(data.count)
+                resumeIfNeeded()
+                pruneIfNeeded()
+                return data
             }
-            return result
+            if let knownSize, offset >= knownSize { return Data() }
+            if let eofOffset, offset >= eofOffset { return Data() }
+            if let error = networkError {
+                networkError = nil
+                throw error
+            }
+            if !requestCanReach(offset) { startRequest(at: offset) }
+            guard condition.wait(until: deadline) else { throw URLError(.timedOut) }
         }
     }
 
-    private func blockData(index: Int64, start: Int64) throws -> Data {
-        let file = directory.appendingPathComponent("\(index).block")
-        if let data = try? Data(contentsOf: file), !data.isEmpty { return data }
-
-        let end = min(start + Int64(Self.blockSize) - 1, (knownSize ?? .max) - 1)
-        var request = URLRequest(url: remoteURL)
-        request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
-        request.timeoutInterval = 30
-        let response = SynchronousResponse(expectedStart: start, maximumBytes: Self.blockSize,
-                                           allowsWholeFile: (knownSize ?? .max) <= Int64(Self.blockSize))
-        #if DEBUG
-        let began = ContinuousClock.now
-        #endif
-        response.fetch(request)
-        #if DEBUG
-        NSLog("块缓存 下载 块%lld 状态 %ld 字节 %ld 用时 %@ %@", index, response.response?.statusCode ?? -1,
-              response.data?.count ?? 0, "\(began.duration(to: .now))", response.error.map { "\($0)" } ?? "")
-        #endif
-        if let error = response.error { throw error }
-        guard let data = response.data, !data.isEmpty else { throw URLError(.zeroByteResource) }
-        if start > 0, response.response?.statusCode != 206 { throw URLError(.badServerResponse) }
-        if let range = response.response?.value(forHTTPHeaderField: "Content-Range"),
-           let total = range.split(separator: "/").last.flatMap({ Int64($0) }) {
-            knownSize = total
-        } else if response.response?.statusCode == 200, start == 0,
-                  let length = response.response?.expectedContentLength, length > 0 {
-            knownSize = length
+    func prioritize(_ offset: Int64) {
+        condition.withLock {
+            consumerOffset = offset
+            guard cachedRange(containing: offset) == nil, !requestCanReach(offset) else {
+                resumeIfNeeded()
+                return
+            }
+            startRequest(at: offset)
         }
-        try data.write(to: file, options: .atomic)
-        return data
+    }
+
+    func cancel() {
+        condition.withLock {
+            generation &+= 1
+            request?.cancel()
+            request = nil
+            writer?.close()
+            writer = nil
+            networkError = URLError(.cancelled)
+            condition.broadcast()
+        }
+    }
+
+    fileprivate func accepted(generation: UInt64, response: HTTPURLResponse, usedRedirect: Bool) -> Bool {
+        condition.withLock {
+            guard generation == self.generation else { return false }
+            if let total = Self.totalSize(from: response) { knownSize = total }
+            if let finalURL = response.url, finalURL.host != remoteURL.host { redirectedURL = finalURL }
+            let valid = response.statusCode == 206 || (requestStart == 0 && response.statusCode == 200)
+            if !valid {
+                if usedRedirect, [401, 403].contains(response.statusCode), !retryingOriginal {
+                    redirectedURL = nil
+                    retryingOriginal = true
+                }
+                networkError = URLError(.badServerResponse)
+            }
+            return valid
+        }
+    }
+
+    fileprivate func rememberRedirect(generation: UInt64, url: URL) {
+        condition.withLock {
+            guard generation == self.generation else { return }
+            redirectedURL = url
+        }
+    }
+
+    fileprivate func receive(generation: UInt64, data: Data) {
+        condition.lock()
+        defer { condition.unlock() }
+        guard generation == self.generation else { return }
+        do {
+            var remainder = data
+            while !remainder.isEmpty {
+                if writer == nil { writer = try SegmentWriter(start: downloadedEnd, directory: directory) }
+                guard let writer else { break }
+                let written = try writer.append(remainder)
+                if let index = ranges.firstIndex(where: { $0.file == writer.file }) {
+                    ranges[index].length = writer.length
+                } else {
+                    ranges.append(CachedRange(start: writer.start, length: writer.length, file: writer.file))
+                }
+                downloadedEnd += Int64(written)
+                remainder.removeFirst(written)
+                if writer.isFull { writer.close(); self.writer = nil }
+            }
+            if downloadedEnd - consumerOffset >= Self.maximumAhead { request?.suspend() }
+            condition.broadcast()
+        } catch {
+            networkError = error
+            condition.broadcast()
+        }
+    }
+
+    fileprivate func completed(generation: UInt64, error: Error?) {
+        condition.withLock {
+            guard generation == self.generation else { return }
+            request = nil
+            writer?.close()
+            writer = nil
+            if let error, (error as? URLError)?.code != .cancelled {
+                if retryingOriginal {
+                    retryingOriginal = false
+                    startRequest(at: downloadedEnd, forceOriginal: true)
+                } else {
+                    networkError = error
+                }
+            } else if error == nil {
+                eofOffset = downloadedEnd
+            }
+            #if DEBUG
+            NSLog("媒体缓存连接结束 bytes=%lld error=%@", downloadedEnd - requestStart,
+                  error?.localizedDescription ?? "-")
+            #endif
+            condition.broadcast()
+        }
+    }
+
+    private func startRequest(at offset: Int64, forceOriginal: Bool = false) {
+        generation &+= 1
+        request?.cancel()
+        writer?.close()
+        writer = nil
+        requestStart = offset
+        downloadedEnd = offset
+        eofOffset = nil
+        networkError = nil
+        let url = forceOriginal ? remoteURL : (redirectedURL ?? remoteURL)
+        #if DEBUG
+        NSLog("媒体缓存连接开始 offset=%lld direct=%@", offset, url == remoteURL ? "no" : "yes")
+        #endif
+        let request = ContinuousRequest(source: self, generation: generation, url: url, offset: offset,
+                                        usedRedirect: !forceOriginal && redirectedURL != nil)
+        self.request = request
+        request.start()
+    }
+
+    private func requestCanReach(_ offset: Int64) -> Bool {
+        guard request != nil else { return false }
+        // 持续连接只能继续向后读；已经越过但又不在磁盘缓存里的位置必须重新发 Range。
+        return offset >= downloadedEnd && offset <= downloadedEnd + Self.maximumAhead
+    }
+
+    private func resumeIfNeeded() {
+        if downloadedEnd - consumerOffset < Self.resumeAhead { request?.resume() }
+    }
+
+    private func readCached(offset: Int64, count: Int) -> Data? {
+        guard let range = cachedRange(containing: offset) else { return nil }
+        let available = min(Int64(count), range.end - offset)
+        guard available > 0, let handle = try? FileHandle(forReadingFrom: range.file) else { return nil }
+        defer { try? handle.close() }
+        try? handle.seek(toOffset: UInt64(offset - range.start))
+        return try? handle.read(upToCount: Int(available))
+    }
+
+    private func cachedRange(containing offset: Int64) -> CachedRange? {
+        ranges.filter { offset >= $0.start && offset < $0.end }.max { $0.end < $1.end }
+    }
+
+    private func pruneIfNeeded() {
+        var total = ranges.reduce(Int64(0)) { $0 + $1.length }
+        guard total > Self.perSourceLimit else { return }
+        let keepAfter = max(0, consumerOffset - Self.maximumBack)
+        let activeFile = writer?.file
+        for range in ranges.sorted(by: { $0.start < $1.start })
+        where total > Self.perSourceLimit * 9 / 10 && range.end < keepAfter && range.file != activeFile {
+            try? FileManager.default.removeItem(at: range.file)
+            ranges.removeAll { $0.file == range.file }
+            total -= range.length
+        }
+    }
+
+    private static func loadRanges(from directory: URL) -> [CachedRange] {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]) else { return [] }
+        return files.compactMap { file in
+            let parts = file.deletingPathExtension().lastPathComponent.split(separator: "-")
+            guard parts.first == "segment", parts.count >= 3, let start = Int64(parts[1]),
+                  let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else { return nil }
+            return CachedRange(start: start, length: Int64(size), file: file)
+        }.sorted { $0.start < $1.start }
+    }
+
+    private static func totalSize(from response: HTTPURLResponse) -> Int64? {
+        response.value(forHTTPHeaderField: "Content-Range")?
+            .split(separator: "/").last.flatMap { Int64($0) }
+            ?? (response.statusCode == 200 && response.expectedContentLength > 0 ? response.expectedContentLength : nil)
     }
 }
 
-private final class SynchronousResponse: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private let semaphore = DispatchSemaphore(value: 0)
-    private let lock = NSLock()
-    private let expectedStart: Int64
-    private let maximumBytes: Int
-    private let allowsWholeFile: Bool
-    private var buffer = Data()
-    private var finished = false
-    private(set) var data: Data?
-    private(set) var response: HTTPURLResponse?
-    private(set) var error: Error?
+/// 一次连续 Range 请求。收到的数据立即交给 ContinuousMediaSource 落盘，不等整段下载完。
+private final class ContinuousRequest: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate, @unchecked Sendable {
+    private weak var source: ContinuousMediaSource?
+    private let generation: UInt64
+    private let initialURL: URL
+    private let offset: Int64
+    private let usedRedirect: Bool
+    private let stateLock = NSLock()
+    private var task: URLSessionDataTask?
+    private var session: URLSession?
+    private var suspended = false
+    private var rejected = false
 
-    init(expectedStart: Int64, maximumBytes: Int, allowsWholeFile: Bool) {
-        self.expectedStart = expectedStart
-        self.maximumBytes = maximumBytes
-        self.allowsWholeFile = allowsWholeFile
+    init(source: ContinuousMediaSource, generation: UInt64, url: URL, offset: Int64, usedRedirect: Bool) {
+        self.source = source
+        self.generation = generation
+        initialURL = url
+        self.offset = offset
+        self.usedRedirect = usedRedirect
     }
 
-    func fetch(_ request: URLRequest) {
+    func start() {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.connectionProxyDictionary = [:]
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 300
         if let protocolClasses = MediaCacheTesting.protocolClasses { configuration.protocolClasses = protocolClasses }
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-        session.dataTask(with: request).resume()
-        semaphore.wait()
-        session.finishTasksAndInvalidate()
+        var request = URLRequest(url: initialURL)
+        request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
+        request.timeoutInterval = 30
+        let task = session.dataTask(with: request)
+        stateLock.withLock {
+            self.session = session
+            self.task = task
+        }
+        task.resume()
+    }
+
+    func suspend() {
+        stateLock.withLock {
+            guard !suspended else { return }
+            suspended = true
+            task?.suspend()
+        }
+    }
+
+    func resume() {
+        stateLock.withLock {
+            guard suspended else { return }
+            suspended = false
+            task?.resume()
+        }
+    }
+
+    func cancel() {
+        stateLock.withLock {
+            task?.cancel()
+            session?.invalidateAndCancel()
+            task = nil
+            session = nil
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        guard let url = request.url else { completionHandler(request); return }
+        source?.rememberRedirect(generation: generation, url: url)
+        var redirected = request
+        redirected.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
+        completionHandler(redirected)
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
                     completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        let http = response as? HTTPURLResponse
-        self.response = http
-        if http?.statusCode == 206 || (expectedStart == 0 && allowsWholeFile && http?.statusCode == 200) {
-            completionHandler(.allow)
-        } else {
-            error = URLError(.badServerResponse)
+        guard let response = response as? HTTPURLResponse,
+              source?.accepted(generation: generation, response: response, usedRedirect: usedRedirect) == true else {
+            rejected = true
             completionHandler(.cancel)
+            return
         }
+        completionHandler(.allow)
     }
 
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive chunk: Data) {
-        lock.withLock {
-            guard buffer.count < maximumBytes else { return }
-            buffer.append(chunk.prefix(maximumBytes - buffer.count))
-        }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        source?.receive(generation: generation, data: data)
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError taskError: Error?) {
-        lock.withLock {
-            guard !finished else { return }
-            finished = true
-            data = buffer
-            if error == nil, let taskError, (taskError as? URLError)?.code != .cancelled { error = taskError }
-        }
-        semaphore.signal()
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let finalError = rejected ? URLError(.badServerResponse) : error
+        source?.completed(generation: generation, error: finalError)
+        session.finishTasksAndInvalidate()
     }
 }
 
 private final class CachedStreamCursor: @unchecked Sendable {
-    let source: PersistentMediaSource
+    let source: ContinuousMediaSource
     private let lock = NSLock()
     private var position: Int64 = 0
     private var cancelled = false
 
-    init(source: PersistentMediaSource) { self.source = source }
+    init(source: ContinuousMediaSource) { self.source = source }
 
     func read(_ buffer: UnsafeMutablePointer<CChar>?, count: UInt64) -> Int64 {
         guard let buffer else { return -1 }
@@ -217,14 +500,19 @@ private final class CachedStreamCursor: @unchecked Sendable {
 
     func seek(_ offset: Int64) -> Int64 {
         guard offset >= 0 else { return Int64(MPV_ERROR_UNSUPPORTED.rawValue) }
-        return lock.withLock {
+        let result = lock.withLock { () -> Int64 in
             guard !cancelled else { return Int64(MPV_ERROR_GENERIC.rawValue) }
             position = offset
             return position
         }
+        if result >= 0 { source.prioritize(offset) }
+        return result
     }
 
-    func cancel() { lock.withLock { cancelled = true } }
+    func cancel() {
+        lock.withLock { cancelled = true }
+        source.cancel()
+    }
 }
 
 func mpvCacheOpen(_ userData: UnsafeMutableRawPointer?, _ uri: UnsafeMutablePointer<CChar>?,
@@ -266,4 +554,12 @@ private func mpvCacheClose(_ cookie: UnsafeMutableRawPointer?) {
 private func mpvCacheCancel(_ cookie: UnsafeMutableRawPointer?) {
     guard let cookie else { return }
     Unmanaged<CachedStreamCursor>.fromOpaque(cookie).takeUnretainedValue().cancel()
+}
+
+private extension NSCondition {
+    func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock()
+        defer { unlock() }
+        return try body()
+    }
 }

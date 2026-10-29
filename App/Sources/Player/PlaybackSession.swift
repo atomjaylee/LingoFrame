@@ -35,7 +35,9 @@ final class PlaybackSession {
     private(set) var secondaryCues: [SubtitleCue] = []
     /// 没有可用字幕时的说明，比如「这个片源只有图形字幕」。
     private(set) var subtitleNote: String?
-    var subtitleMode: SubtitleMode = .bilingual
+    var subtitleMode: SubtitleMode = .bilingual {
+        didSet { engine.setNativeSubtitlesVisible(subtitleMode != .off && primaryCues.isEmpty) }
+    }
     /// 当前句在主字幕里的序号，每 0.1 秒按播放位置更新，只有换句时才变。
     private(set) var currentLine: Int?
     /// 副字幕（中文）里和当前时间重叠的那一条。
@@ -242,6 +244,7 @@ final class PlaybackSession {
 
     /// 自动挑字幕：文本字幕由 Emby 在后台导出，不阻塞 libmpv 首帧；图形字幕交给 mpv 播放但不参与逐句学习。
     private func loadSubtitles(itemID: String, source: MediaSourceInfo) {
+        engine.setNativeSubtitlesVisible(true)
         let textCodecs: Set<String> = ["srt", "subrip", "ass", "ssa", "vtt", "webvtt", "mov_text", "tx3g"]
         let options: [SubtitleOption] = source.subtitleStreams.compactMap { s in
             guard let index = s.index, s.isForced != true else { return nil }
@@ -263,7 +266,7 @@ final class PlaybackSession {
         primarySubtitle = primary
         secondarySubtitle = secondary
         if primary == nil {
-            subtitleNote = source.subtitleStreams.isEmpty ? "这个片源没有字幕" : "这个片源只有图形字幕，暂不能逐句取词"
+            subtitleNote = source.subtitleStreams.isEmpty ? "这个片源没有字幕" : "图形字幕由播放器直接显示，暂不能逐句取词"
         } else {
             subtitleNote = "正在读取字幕…"
             selectSubtitles(primary: primary, secondary: secondary, itemID: itemID, sourceID: source.id)
@@ -292,9 +295,10 @@ final class PlaybackSession {
             guard !Task.isCancelled else { return }
             self.primaryCues = primaryResult ?? []
             self.secondaryCues = secondaryResult ?? []
+            self.engine.setNativeSubtitlesVisible(self.subtitleMode != .off && self.primaryCues.isEmpty)
             if primary != nil {
-                self.subtitleNote = primaryResult == nil ? "字幕下载失败"
-                    : primaryResult?.isEmpty == true ? "字幕是空的或格式无法解析" : nil
+                self.subtitleNote = primaryResult == nil ? "学习字幕读取失败，已由播放器直接显示"
+                    : primaryResult?.isEmpty == true ? "学习字幕无法解析，已由播放器直接显示" : nil
             }
             self.log.info("字幕 主 \(self.primaryCues.count) 条 副 \(self.secondaryCues.count) 条")
             self.startTicker()

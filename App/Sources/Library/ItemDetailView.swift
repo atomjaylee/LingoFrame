@@ -38,7 +38,7 @@ struct ItemDetailView: View {
     private var tmdb: TMDBClient? { model.tmdb }
     private var entry: CatalogEntry? { ref.flatMap { model.recommendations.entry(for: $0) } }
     private var isSeries: Bool { ref?.type == .tv || emby?.kind == .series }
-    private var play: PlayAction { PlayAction(openWindow: openWindow, serverID: serverID) }
+    private var play: PlayAction { PlayAction(openWindow: openWindow, model: model, serverID: serverID) }
     private var preheatItem: EmbyItem? {
         if let emby, emby.isPlayable { return emby }
         return isSeries ? nextEpisode : nil

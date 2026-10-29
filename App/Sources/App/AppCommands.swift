@@ -8,7 +8,7 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            OpenLocalVideoButton()
+            OpenLocalVideoButton(model: model)
         }
         CommandMenu("面板") {
             PanelsMenuContent()
@@ -23,6 +23,7 @@ struct AppCommands: Commands {
 
 /// 打开本地视频文件，不需要 Emby，方便测试播放。
 private struct OpenLocalVideoButton: View {
+    let model: AppModel
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -31,7 +32,7 @@ private struct OpenLocalVideoButton: View {
             panel.allowedContentTypes = [.movie, .video, .mpeg4Movie, .quickTimeMovie]
             panel.allowsMultipleSelection = false
             if panel.runModal() == .OK, let url = panel.url {
-                openWindow(id: PlayerWindow.id, value: PlayRequest.local(url))
+                model.showPlayer(.local(url), using: openWindow)
             }
         }
         .keyboardShortcut("o")

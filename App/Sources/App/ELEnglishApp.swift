@@ -16,8 +16,8 @@ struct ELEnglishApp: App {
         .defaultSize(width: 1440, height: 900)
         .commands { AppCommands(model: model) }
 
-        WindowGroup("播放", id: PlayerWindow.id, for: PlayRequest.self) { $request in
-            PlayerWindow(request: request)
+        Window("播放", id: PlayerWindow.id) {
+            PlayerWindow(request: model.playRequest, requestRevision: model.playRequestRevision)
                 .appEnvironment(model)
         }
         .windowStyle(.titleBar)
@@ -75,6 +75,7 @@ extension View {
 }
 
 struct RootView: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -84,7 +85,7 @@ struct RootView: View {
         // 从访达打开的视频文件交给播放窗口，主窗口不重复打开。
         .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         .onOpenURL { url in
-            if url.isFileURL { openWindow(id: PlayerWindow.id, value: PlayRequest.local(url)) }
+            if url.isFileURL { model.showPlayer(.local(url), using: openWindow) }
         }
     }
 }

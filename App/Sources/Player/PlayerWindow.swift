@@ -8,6 +8,7 @@ import Workspace
 struct PlayerWindow: View {
     static let id = "player"
     let request: PlayRequest?
+    let requestRevision: UInt64
     @Environment(AppModel.self) private var model
     @State private var session: PlaybackSession?
 
@@ -17,7 +18,7 @@ struct PlayerWindow: View {
             if let session { PlayerScreen(session: session) }
         }
         .frame(minWidth: 720, minHeight: 420)
-        .task(id: request) {
+        .task(id: requestRevision) {
             guard let request else { return }
             let serverID = request.serverID
             let prepared: PreparedPlayback? = if case .emby(let serverID, let itemID, let resume) = request {

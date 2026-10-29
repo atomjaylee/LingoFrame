@@ -139,7 +139,7 @@ struct MainShell: View {
             if let server, parts.count > 1, let match = server.catalog.first(where: { $0.cardTitle.contains(parts[1]) }) {
                 var id = match.id
                 if match.kind == .series, let first = try? await server.client.episodes(of: match.id, season: nil).first { id = first.id }
-                openWindow(id: PlayerWindow.id, value: PlayRequest.emby(serverID: server.id, itemID: id, resume: false))
+                model.showPlayer(.emby(serverID: server.id, itemID: id, resume: false), using: openWindow)
             }
         case "soaktest":
             // 连续播放一段时间，检查长时间播放是否卡顿或中断：soaktest:片名:秒数
@@ -156,7 +156,9 @@ struct MainShell: View {
                     if state != last { NSLog("耐久 %.1fs 状态 %@ 位置 %.1f", Double(tick) / 2, state, session.engine.currentTime); last = state }
                     try? await Task.sleep(for: .milliseconds(500))
                 }
-                NSLog("耐久 结束 位置 %.1f 错误 %@", session.engine.currentTime, session.errorMessage ?? "-")
+                NSLog("耐久 结束 位置 %.1f 解码 %@ 字幕 %@ 错误 %@", session.engine.currentTime,
+                      session.engine.diagnostics().playbackType ?? "-", session.engine.nativeSubtitleDescription ?? "-",
+                      session.errorMessage ?? "-")
                 await session.close()
             }
             NSLog("playtest done")
@@ -170,7 +172,7 @@ struct MainShell: View {
             }
         case "play":
             if let server, parts.count > 1 {
-                openWindow(id: PlayerWindow.id, value: PlayRequest.emby(serverID: server.id, itemID: parts[1], resume: true))
+                model.showPlayer(.emby(serverID: server.id, itemID: parts[1], resume: true), using: openWindow)
             }
         default:
             break
@@ -302,11 +304,12 @@ struct ErrorBanner: View {
 @MainActor
 struct PlayAction {
     let openWindow: OpenWindowAction
+    let model: AppModel
     let serverID: String?
 
     func callAsFunction(_ item: EmbyItem, resume: Bool = true) {
         guard let serverID else { return }
-        openWindow(id: PlayerWindow.id, value: PlayRequest.emby(serverID: serverID, itemID: item.id, resume: resume))
+        model.showPlayer(.emby(serverID: serverID, itemID: item.id, resume: resume), using: openWindow)
     }
 }
 
@@ -365,13 +368,14 @@ enum TimeFormat {
 
 /// 资源库里的一张卡片：单集和「继续观看」直接播，剧集和电影进详情。所属服务器从环境里取。
 struct ItemCard: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.embyClient) private var client
     @Environment(\.embyServerID) private var serverID
     @Environment(\.openWindow) private var openWindow
     let item: EmbyItem
     var landscape = false
 
-    private var play: PlayAction { PlayAction(openWindow: openWindow, serverID: serverID) }
+    private var play: PlayAction { PlayAction(openWindow: openWindow, model: model, serverID: serverID) }
 
     var body: some View {
         Group {

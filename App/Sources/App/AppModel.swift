@@ -96,6 +96,9 @@ final class AppModel {
     }
     /// 最近激活的播放会话，独立窗口里的面板通过它拿到播放数据。
     var activeSession: PlaybackSession?
+    /// 单播放窗口当前要加载的请求；新请求复用同一个窗口和同一个 libmpv 内核。
+    var playRequest: PlayRequest?
+    var playRequestRevision: UInt64 = 0
     @ObservationIgnored private var preparedPlayback: PreparedPlayback?
 
     @ObservationIgnored private let accountStore: AccountStore
@@ -194,6 +197,12 @@ final class AppModel {
               resume || preparedPlayback.startAt == nil else { return nil }
         self.preparedPlayback = nil
         return preparedPlayback
+    }
+
+    func showPlayer(_ request: PlayRequest, using openWindow: OpenWindowAction) {
+        playRequest = request
+        playRequestRevision &+= 1
+        openWindow(id: PlayerWindow.id)
     }
 
     /// 启动时刷新所有服务器，并把片目和 TMDB 对上号。

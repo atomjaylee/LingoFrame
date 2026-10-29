@@ -51,6 +51,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     public private(set) var audioOptions: [TrackOption] = []
     public private(set) var selectedAudioID: Int?
     public private(set) var videoDescription: String?
+    public private(set) var nativeSubtitlesVisible = true
+    public private(set) var nativeSubtitleDescription: String?
 
     public var rate: Double = 1 {
         didSet { setDouble("speed", rate) }
@@ -75,6 +77,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     @ObservationIgnored private var loadedURL: URL?
     @ObservationIgnored private var observedTime: Double = 0
     @ObservationIgnored private let headless: Bool
+    @ObservationIgnored private var didAutoSelectSubtitle = false
 
     public init(headless: Bool = false) {
         self.headless = headless
@@ -108,9 +111,13 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         audioOptions = []
         selectedAudioID = nil
         videoDescription = nil
+        nativeSubtitleDescription = nil
+        didAutoSelectSubtitle = false
+        setNativeSubtitlesVisible(true)
         lastError = nil
         loadedURL = url
         self.autoplay = autoplay && !preload
+        configureBuffering(forPreload: preload)
         setFlag("pause", true)
         var options: [String] = ["pause=yes"]
         if let startAt, startAt > 0 { options.append("start=\(startAt)") }
@@ -123,6 +130,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     public func activatePreloaded(url: URL, autoplay: Bool = true) -> Bool {
         guard loadedURL == url, state != .idle, !state.isFailed else { return false }
         self.autoplay = autoplay
+        configureBuffering(forPreload: false)
         if autoplay { play() }
         return true
     }
@@ -178,12 +186,20 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         selectedAudioID = id
     }
 
+    /// 学习层字幕尚未就绪时由 mpv 直接显示 ASS/PGS；文本字幕下载完成后切回可点击的自绘字幕。
+    public func setNativeSubtitlesVisible(_ visible: Bool) {
+        nativeSubtitlesVisible = visible
+        setFlag("sub-visibility", visible)
+    }
+
     public func diagnostics() -> PlaybackDiagnostics {
-        PlaybackDiagnostics(
+        let hardwareDecoder = getString("hwdec-current")
+        let decoder = hardwareDecoder.map { $0 == "no" ? "software" : $0 } ?? "检测中"
+        return PlaybackDiagnostics(
             indicatedBitrate: nil,
             observedBitrate: getDouble("cache-speed").nonZero,
             droppedFrames: getInt("frame-drop-count"),
-            playbackType: "libmpv / \(getString("hwdec-current") ?? "software")",
+            playbackType: "libmpv / \(decoder)",
             lastError: lastError)
     }
 
@@ -226,9 +242,13 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         }
         var options: [(String, String)] = [
             ("hwdec", "videotoolbox"),
+            ("hwdec-codecs", "all"),
             ("video-sync", "audio"),
             ("audio-pitch-correction", "yes"),
-            ("sub-visibility", "no"),
+            ("sub-visibility", "yes"),
+            ("sub-auto", "fuzzy"),
+            ("slang", "eng,en,zho,chi,zh"),
+            ("sub-ass-override", "no"),
             ("cache", "yes"),
             ("cache-pause", "yes"),
             ("cache-pause-initial", "no"),
@@ -267,6 +287,13 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         observe("width", MPV_FORMAT_INT64)
         observe("height", MPV_FORMAT_INT64)
         observe("track-list", MPV_FORMAT_NONE)
+        observe("hwdec-current", MPV_FORMAT_STRING)
+    }
+
+    private func configureBuffering(forPreload preload: Bool) {
+        setInt("demuxer-max-bytes", preload ? 32 * 1024 * 1024 : 512 * 1024 * 1024)
+        setInt("demuxer-max-back-bytes", preload ? 8 * 1024 * 1024 : 128 * 1024 * 1024)
+        setDouble("cache-secs", preload ? 5 : 60)
     }
 
     private func observe(_ name: String, _ format: mpv_format) {
@@ -324,7 +351,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
             else if state == .loading { state = getFlag("pause") ? .paused : .playing }
         case "eof-reached":
             if flag(from: property.data) == true { state = .ended }
-        case "width", "height", "track-list":
+        case "width", "height", "track-list", "hwdec-current":
             reloadPresentationInfo()
         default:
             break
@@ -348,21 +375,38 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         let height = getInt("height")
         if width > 0, height > 0 { presentationSize = CGSize(width: width, height: height) }
         let codec = getString("video-codec") ?? getString("video-format")
-        if let codec, width > 0, height > 0 { videoDescription = "\(codec.uppercased()) \(width)×\(height)" }
+        if let codec, width > 0, height > 0 {
+            let hwdec = getString("hwdec-current")
+            let decoder = hwdec == nil ? "" : hwdec == "no" ? " · 软件解码" : " · 硬件解码"
+            videoDescription = "\(codec.uppercased()) \(width)×\(height)\(decoder)"
+        }
 
         let count = getInt("track-list/count")
         var options: [TrackOption] = []
         var selected: Int?
-        for index in 0..<count where getString("track-list/\(index)/type") == "audio" {
+        var firstSubtitleID: Int?
+        var selectedSubtitle: String?
+        for index in 0..<count {
+            let type = getString("track-list/\(index)/type")
             let id = getInt("track-list/\(index)/id")
-            let title = getString("track-list/\(index)/title")
-                ?? getString("track-list/\(index)/lang")
-                ?? "音轨 \(options.count + 1)"
-            options.append(TrackOption(id: id, title: title, language: getString("track-list/\(index)/lang")))
-            if getFlag("track-list/\(index)/selected") { selected = id }
+            let language = getString("track-list/\(index)/lang")
+            let title = getString("track-list/\(index)/title") ?? language
+            if type == "audio" {
+                options.append(TrackOption(id: id, title: title ?? "音轨 \(options.count + 1)", language: language))
+                if getFlag("track-list/\(index)/selected") { selected = id }
+            } else if type == "sub" {
+                firstSubtitleID = firstSubtitleID ?? id
+                if getFlag("track-list/\(index)/selected") { selectedSubtitle = title ?? "字幕 \(id)" }
+            }
         }
         audioOptions = options
         selectedAudioID = selected
+        if selectedSubtitle == nil, !didAutoSelectSubtitle, let firstSubtitleID {
+            didAutoSelectSubtitle = true
+            setInt("sid", firstSubtitleID)
+            selectedSubtitle = "字幕 \(firstSubtitleID)"
+        }
+        nativeSubtitleDescription = selectedSubtitle
     }
 
     private func flag(from pointer: UnsafeMutableRawPointer?) -> Bool? {
