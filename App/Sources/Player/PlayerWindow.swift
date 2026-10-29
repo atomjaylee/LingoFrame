@@ -485,16 +485,25 @@ private struct Scrubber: View {
     let engine: MPVPlayerEngine
     @Binding var isScrubbing: Bool
     @State private var dragValue: Double = 0
+    @Environment(\.theme) private var theme
 
     var body: some View {
         GeometryReader { geo in
             let duration = max(engine.duration, 1)
-            let value = min(max((isScrubbing ? dragValue : engine.currentTime) / duration, 0), 1)
+            let played = min(max((isScrubbing ? dragValue : engine.currentTime) / duration, 0), 1)
+            let buffered = min(max(engine.bufferedTime / duration, played), 1)
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.28)).frame(height: 4)
-                Capsule().fill(.white).frame(width: max(4, geo.size.width * value), height: 4)
+                Capsule().fill(.white.opacity(0.18)).frame(height: 4)
+                if buffered > 0 {
+                    Capsule().fill(.white.opacity(0.72))
+                        .frame(width: max(4, geo.size.width * buffered), height: 4)
+                }
+                if played > 0 {
+                    Capsule().fill(theme.colors.accentAmber.color)
+                        .frame(width: max(4, geo.size.width * played), height: 4)
+                }
                 Circle().fill(.white).frame(width: 16, height: 16).shadow(color: .black.opacity(0.4), radius: 1.5, y: 1)
-                    .offset(x: geo.size.width * value - 8)
+                    .offset(x: geo.size.width * played - 8)
             }
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
@@ -514,7 +523,7 @@ private struct Scrubber: View {
         .disabled(engine.duration <= 0)
         .accessibilityElement()
         .accessibilityLabel("播放进度")
-        .accessibilityValue("\(TimeFormat.clock(engine.currentTime)) / \(TimeFormat.clock(engine.duration))")
+        .accessibilityValue("\(TimeFormat.clock(engine.currentTime)) / \(TimeFormat.clock(engine.duration))，缓存至 \(TimeFormat.clock(engine.bufferedTime))")
     }
 }
 

@@ -47,6 +47,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     public private(set) var state: PlaybackState = .idle
     public private(set) var currentTime: Double = 0
     public private(set) var duration: Double = 0
+    public private(set) var bufferedTime: Double = 0
     public private(set) var presentationSize: CGSize = .zero
     public private(set) var audioOptions: [TrackOption] = []
     public private(set) var selectedAudioID: Int?
@@ -78,6 +79,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     @ObservationIgnored private var observedTime: Double = 0
     @ObservationIgnored private let headless: Bool
     @ObservationIgnored private var didAutoSelectSubtitle = false
+    @ObservationIgnored private var hasAbsoluteCacheTime = false
 
     public init(headless: Bool = false) {
         self.headless = headless
@@ -106,6 +108,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         state = .loading
         currentTime = startAt ?? 0
         observedTime = currentTime
+        bufferedTime = currentTime
+        hasAbsoluteCacheTime = false
         duration = durationHint ?? 0
         presentationSize = .zero
         audioOptions = []
@@ -142,8 +146,18 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         loadedURL = nil
         currentTime = 0
         observedTime = 0
+        bufferedTime = 0
         duration = 0
         state = .idle
+    }
+
+    public func applyCacheLimit() {
+        resources.streamRegistry.applyConfiguredLimit(excludingActive: state != .idle)
+    }
+
+    public func prepareForCacheClear() {
+        stop()
+        resources.streamRegistry.reset()
     }
 
     public func play() {
@@ -288,6 +302,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         observe("height", MPV_FORMAT_INT64)
         observe("track-list", MPV_FORMAT_NONE)
         observe("hwdec-current", MPV_FORMAT_STRING)
+        observe("demuxer-cache-time", MPV_FORMAT_DOUBLE)
+        observe("demuxer-cache-duration", MPV_FORMAT_DOUBLE)
     }
 
     private func configureBuffering(forPreload preload: Bool) {
@@ -339,6 +355,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
             if let value = property.data?.assumingMemoryBound(to: Double.self).pointee, value.isFinite {
                 observedTime = value
                 currentTime = value
+                if bufferedTime < value { bufferedTime = value }
             }
         case "duration":
             if let value = property.data?.assumingMemoryBound(to: Double.self).pointee, value > 0 { duration = value }
@@ -353,6 +370,16 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
             if flag(from: property.data) == true { state = .ended }
         case "width", "height", "track-list", "hwdec-current":
             reloadPresentationInfo()
+        case "demuxer-cache-time":
+            if let value = property.data?.assumingMemoryBound(to: Double.self).pointee, value.isFinite {
+                hasAbsoluteCacheTime = true
+                bufferedTime = min(duration > 0 ? duration : value, max(currentTime, value))
+            }
+        case "demuxer-cache-duration":
+            if !hasAbsoluteCacheTime,
+               let value = property.data?.assumingMemoryBound(to: Double.self).pointee, value.isFinite {
+                bufferedTime = min(duration > 0 ? duration : currentTime + value, currentTime + max(0, value))
+            }
         default:
             break
         }

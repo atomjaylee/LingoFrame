@@ -60,6 +60,14 @@ private func waitUntil(timeout: Double = 10, _ condition: () -> Bool) async thro
 @MainActor
 @Suite(.serialized)
 struct MPVPlayerEngineTests {
+    @Test func cacheLimitCanBeConfigured() {
+        let old = MediaCachePolicy.limitGB
+        defer { MediaCachePolicy.limitGB = old }
+        MediaCachePolicy.limitGB = 50
+        #expect(MediaCachePolicy.limitGB == 50)
+        #expect(MediaCachePolicy.limitBytes == 50 * 1024 * 1024 * 1024)
+    }
+
     @Test func surfaceUsesMetalLayer() {
         let engine = MPVPlayerEngine()
         #expect(engine.surface.wantsLayer)
@@ -79,6 +87,7 @@ struct MPVPlayerEngineTests {
         try await waitUntil { engine.state == .paused && engine.duration > 0 }
         #expect(abs(engine.duration - 6) < 0.3)
         #expect(engine.presentationSize == CGSize(width: 640, height: 360))
+        #expect(engine.bufferedTime >= engine.currentTime)
 
         await engine.seek(to: 3.2, exact: true)
         #expect(abs(engine.currentTime - 3.2) < 0.4)

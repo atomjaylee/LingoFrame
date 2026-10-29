@@ -1,4 +1,5 @@
 import DesignSystem
+import PlaybackKit
 import SwiftUI
 import TMDBKit
 import Workspace
@@ -9,7 +10,7 @@ struct SettingsView: View {
     @State private var page: Page = .appearance
     @State private var tmdbOK: Bool?
 
-    enum Page: Hashable { case servers, tmdb, layout, appearance }
+    enum Page: Hashable { case servers, tmdb, layout, cache, appearance }
 
     var body: some View {
         NavigationSplitView {
@@ -25,6 +26,7 @@ struct SettingsView: View {
                 }
                 Section("播放体验") {
                     row(.layout, "播放布局", icon: "rectangle.3.group") { EmptyView() }
+                    row(.cache, "缓存与预加载", icon: "externaldrive.badge.timemachine") { EmptyView() }
                 }
                 Section("使用偏好") {
                     row(.appearance, "外观与交互", icon: "paintbrush.pointed") { EmptyView() }
@@ -38,6 +40,7 @@ struct SettingsView: View {
                 case .servers: AccountSettings()
                 case .tmdb: TMDBSettings(status: $tmdbOK)
                 case .layout: LayoutSettings()
+                case .cache: CacheSettings()
                 case .appearance: AppearanceSettings()
                 }
             }
@@ -51,6 +54,7 @@ struct SettingsView: View {
         case .servers: "资源库"
         case .tmdb: "数据与资源"
         case .layout: "播放布局"
+        case .cache: "缓存与预加载"
         case .appearance: "外观与交互"
         }
     }
@@ -63,6 +67,69 @@ struct SettingsView: View {
             trailing().font(.system(size: 11, weight: .medium))
         }
         .tag(page)
+    }
+}
+
+private struct CacheSettings: View {
+    @Environment(AppModel.self) private var model
+    @AppStorage(MediaCachePolicy.limitGBKey) private var limitGB = MediaCachePolicy.defaultLimitGB
+    @State private var usageBytes: Int64 = 0
+    @State private var isClearing = false
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("容量上限", selection: $limitGB) {
+                    ForEach(MediaCachePolicy.allowedLimitGB, id: \.self) { size in
+                        Text("\(size) GB").tag(size)
+                    }
+                }
+                LabeledContent("当前占用", value: ByteCountFormatter.string(fromByteCount: usageBytes, countStyle: .file))
+                HStack {
+                    Spacer()
+                    if isClearing { ProgressView().controlSize(.small) }
+                    Button("清空缓存", role: .destructive, action: clearCache)
+                        .disabled(isClearing || usageBytes == 0 || model.activeSession != nil)
+                }
+            } header: {
+                Text("磁盘缓存")
+            } footer: {
+                Text(model.activeSession == nil
+                     ? "缓存会自动回收最久未使用的视频；修改上限后立即清理到新容量以内。"
+                     : "播放期间不能清空缓存，容量上限会在播放过程中自动生效。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("预加载") {
+                LabeledContent("详情页预加载", value: "首帧与约 32–48 MB 数据")
+                LabeledContent("播放预读", value: "约 60 秒")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            if !MediaCachePolicy.allowedLimitGB.contains(limitGB) { limitGB = MediaCachePolicy.defaultLimitGB }
+            refreshUsage()
+        }
+        .onChange(of: limitGB) { _, value in
+            MediaCachePolicy.limitGB = value
+            model.playbackEngine.applyCacheLimit()
+            refreshUsage()
+        }
+    }
+
+    private func refreshUsage() {
+        Task {
+            usageBytes = await Task.detached(priority: .utility) { MediaCachePolicy.currentUsageBytes() }.value
+        }
+    }
+
+    private func clearCache() {
+        isClearing = true
+        model.playbackEngine.prepareForCacheClear()
+        Task {
+            try? await Task.detached(priority: .utility) { try MediaCachePolicy.clear() }.value
+            usageBytes = 0
+            isClearing = false
+        }
     }
 }
 

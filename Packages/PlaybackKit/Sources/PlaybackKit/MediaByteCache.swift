@@ -6,6 +6,54 @@ enum MediaCacheTesting {
     nonisolated(unsafe) static var protocolClasses: [AnyClass]?
 }
 
+public enum MediaCachePolicy {
+    public static let limitGBKey = "player.cache.limitGB"
+    public static let defaultLimitGB = 20
+    public static let allowedLimitGB = [5, 10, 20, 50, 100, 200]
+
+    public static var limitGB: Int {
+        get {
+            let saved = UserDefaults.standard.integer(forKey: limitGBKey)
+            return allowedLimitGB.contains(saved) ? saved : defaultLimitGB
+        }
+        set {
+            UserDefaults.standard.set(allowedLimitGB.contains(newValue) ? newValue : defaultLimitGB,
+                                      forKey: limitGBKey)
+        }
+    }
+
+    public static var limitBytes: Int64 { Int64(limitGB) * 1024 * 1024 * 1024 }
+
+    public static var directory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ELEnglish/Media", isDirectory: true)
+    }
+
+    public static func currentUsageBytes() -> Int64 { allocatedSize(of: directory) }
+
+    public static func pruneNow() {
+        MPVStreamRegistry.pruneGlobalCache(root: directory, excluding: nil)
+    }
+
+    public static func clear() throws {
+        let manager = FileManager.default
+        guard let contents = try? manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
+        for item in contents { try manager.removeItem(at: item) }
+    }
+
+    fileprivate static func allocatedSize(of directory: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey],
+            options: [.skipsHiddenFiles]) else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in enumerator {
+            let values = try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey])
+            total += Int64(values?.totalFileAllocatedSize ?? values?.fileAllocatedSize ?? 0)
+        }
+        return total
+    }
+}
+
 /// 远程媒体的稳定身份与当前可用地址。cacheKey 不包含会过期的签名 URL。
 public struct CachedMediaSource: Sendable {
     public var cacheKey: String
@@ -23,14 +71,13 @@ public struct CachedMediaSource: Sendable {
 
 /// libmpv 自定义协议的注册表。一个媒体源只保留一条连续上游连接，跳转时才重新发 Range 请求。
 final class MPVStreamRegistry: @unchecked Sendable {
-    private static let globalLimit: Int64 = 20 * 1024 * 1024 * 1024
     private let lock = NSLock()
     private var sources: [String: ContinuousMediaSource] = [:]
+    private var activeToken: String?
     private let root: URL
 
     init() {
-        root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ELEnglish/Media", isDirectory: true)
+        root = MediaCachePolicy.directory
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         Self.removeLegacyBlockCache(from: root)
     }
@@ -44,6 +91,7 @@ final class MPVStreamRegistry: @unchecked Sendable {
         } else {
             sources[token] = ContinuousMediaSource(descriptor: descriptor, directory: directory)
         }
+        activeToken = token
         lock.unlock()
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: directory.path)
         let root = root
@@ -62,11 +110,29 @@ final class MPVStreamRegistry: @unchecked Sendable {
         }
     }
 
+    func applyConfiguredLimit(excludingActive: Bool) {
+        let token = lock.withLock { excludingActive ? activeToken : nil }
+        let root = root
+        DispatchQueue.global(qos: .utility).async {
+            Self.pruneGlobalCache(root: root, excluding: token)
+        }
+    }
+
+    func reset() {
+        let oldSources = lock.withLock { () -> [ContinuousMediaSource] in
+            let values = Array(sources.values)
+            sources.removeAll()
+            activeToken = nil
+            return values
+        }
+        oldSources.forEach { $0.cancel() }
+    }
+
     private static func token(for key: String) -> String {
         SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func pruneGlobalCache(root: URL, excluding activeToken: String) {
+    fileprivate static func pruneGlobalCache(root: URL, excluding activeToken: String?) {
         let manager = FileManager.default
         guard let directories = try? manager.contentsOfDirectory(
             at: root, includingPropertiesForKeys: [.contentModificationDateKey],
@@ -74,27 +140,17 @@ final class MPVStreamRegistry: @unchecked Sendable {
         var entries: [(url: URL, date: Date, size: Int64)] = directories.compactMap { directory in
             guard directory.lastPathComponent != activeToken else { return nil }
             let date = (try? directory.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-            return (directory, date, allocatedSize(of: directory))
+            return (directory, date, MediaCachePolicy.allocatedSize(of: directory))
         }
-        var total = entries.reduce(Int64(0)) { $0 + $1.size }
-        guard total > globalLimit else { return }
+        let activeSize = activeToken.map { MediaCachePolicy.allocatedSize(of: root.appendingPathComponent($0, isDirectory: true)) } ?? 0
+        var total = activeSize + entries.reduce(Int64(0)) { $0 + $1.size }
+        let limit = MediaCachePolicy.limitBytes
+        guard total > limit else { return }
         entries.sort { $0.date < $1.date }
-        for entry in entries where total > globalLimit * 9 / 10 {
+        for entry in entries where total > limit * 9 / 10 {
             try? manager.removeItem(at: entry.url)
             total -= entry.size
         }
-    }
-
-    private static func allocatedSize(of directory: URL) -> Int64 {
-        guard let enumerator = FileManager.default.enumerator(
-            at: directory, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey],
-            options: [.skipsHiddenFiles]) else { return 0 }
-        var total: Int64 = 0
-        for case let file as URL in enumerator {
-            let values = try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey])
-            total += Int64(values?.totalFileAllocatedSize ?? values?.fileAllocatedSize ?? 0)
-        }
-        return total
     }
 
     /// v1 的 2MB 独立请求缓存不能复用，并会绕过新限额；升级时只删除这些可再生缓存块。
@@ -146,7 +202,6 @@ private final class ContinuousMediaSource: @unchecked Sendable {
     private static let maximumAhead: Int64 = 16 * 1024 * 1024
     private static let resumeAhead: Int64 = 8 * 1024 * 1024
     private static let maximumBack: Int64 = 512 * 1024 * 1024
-    private static let perSourceLimit: Int64 = 4 * 1024 * 1024 * 1024
 
     private let condition = NSCondition()
     private let directory: URL
@@ -351,11 +406,13 @@ private final class ContinuousMediaSource: @unchecked Sendable {
 
     private func pruneIfNeeded() {
         var total = ranges.reduce(Int64(0)) { $0 + $1.length }
-        guard total > Self.perSourceLimit else { return }
-        let keepAfter = max(0, consumerOffset - Self.maximumBack)
+        let limit = MediaCachePolicy.limitBytes
+        guard total > limit else { return }
+        let keepBack = min(Self.maximumBack, max(64 * 1024 * 1024, limit / 4))
+        let keepAfter = max(0, consumerOffset - keepBack)
         let activeFile = writer?.file
         for range in ranges.sorted(by: { $0.start < $1.start })
-        where total > Self.perSourceLimit * 9 / 10 && range.end < keepAfter && range.file != activeFile {
+        where total > limit * 9 / 10 && range.end < keepAfter && range.file != activeFile {
             try? FileManager.default.removeItem(at: range.file)
             ranges.removeAll { $0.file == range.file }
             total -= range.length
