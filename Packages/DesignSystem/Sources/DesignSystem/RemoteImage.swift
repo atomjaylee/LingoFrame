@@ -59,7 +59,10 @@ public actor ImagePipeline {
         if let task = inFlight[key] { return try await task.value }
 
         let task = Task { [session] in
-            let (data, _) = try await session.data(from: url)
+            let (data, response) = try await session.data(from: url)
+            guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
             guard let source = CGImageSourceCreateWithData(data as CFData, nil),
                   let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                       kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -84,8 +87,9 @@ public actor ImagePipeline {
         guard let small = try? await image(for: url, maxPixelSize: 24) else { return nil }
         var pixel = [UInt8](repeating: 0, count: 4)
         let drawn = pixel.withUnsafeMutableBytes { buffer -> Bool in
+            guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return false }
             guard let ctx = CGContext(data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      space: colorSpace,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
             ctx.interpolationQuality = .medium
             ctx.draw(small.cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
@@ -133,7 +137,9 @@ public struct RemoteImage: View {
         .clipped()
         .task(id: url) {
             guard let url else { image = nil; return }
+            image = nil
             let loaded = try? await ImagePipeline.shared.image(for: url, maxPixelSize: maxPixelSize)
+            guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.25)) { image = loaded }
         }
     }

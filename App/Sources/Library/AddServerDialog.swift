@@ -309,7 +309,12 @@ private struct EmbyConnectForm: View {
     private func save() {
         guard !host.isEmpty, !username.isEmpty, !isBusy else { return }
         run {
-            let server = probedAddress == address ? probed! : try await model.connector.probe(address)
+            let server: (url: URL, info: ServerInfo)
+            if probedAddress == address, let probed {
+                server = probed
+            } else {
+                server = try await model.connector.probe(address)
+            }
             let account = try await model.connector.login(serverURL: server.url, info: server.info,
                                                           username: username, password: password)
             password = ""

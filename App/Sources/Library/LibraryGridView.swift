@@ -13,6 +13,7 @@ struct LibraryGridView: View {
     @State private var total: Int?
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var loadGeneration: UInt64 = 0
     @AppStorage("library.sort") private var sort: EmbyClient.Sort = .name
     @AppStorage("library.descending") private var descending = false
 
@@ -44,7 +45,12 @@ struct LibraryGridView: View {
                           alignment: .leading, spacing: theme.metrics.space(6)) {
                     ForEach(items) { item in
                         ItemCard(item: item)
-                            .onAppear { if item.id == items.last?.id { Task { await loadMore() } } }
+                            .onAppear {
+                                if item.id == items.last?.id {
+                                    let generation = loadGeneration
+                                    Task { await loadMore(generation: generation) }
+                                }
+                            }
                     }
                 }
                 .mediaCardStyle(PosterTileStyle())
@@ -68,23 +74,29 @@ struct LibraryGridView: View {
     }
 
     private func reload() async {
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        isLoading = false
         items = []
         total = nil
-        await loadMore()
+        await loadMore(generation: generation)
     }
 
-    private func loadMore() async {
-        guard let client, !isLoading, total.map({ items.count < $0 }) ?? true else { return }
+    private func loadMore(generation: UInt64) async {
+        guard generation == loadGeneration, let client, !isLoading,
+              total.map({ items.count < $0 }) ?? true else { return }
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == loadGeneration { isLoading = false } }
         do {
             let page = try await client.items(in: library.id, sort: sort, descending: descending,
                                               start: items.count, limit: pageSize)
+            guard !Task.isCancelled, generation == loadGeneration else { return }
             let known = Set(items.map(\.id))
             items += page.items.filter { !known.contains($0.id) }
             total = page.totalRecordCount ?? items.count
             errorMessage = nil
         } catch {
+            guard !Task.isCancelled, generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
         }
     }

@@ -42,12 +42,15 @@ struct SearchView: View {
         }
         .onAppear { focused = true }
         .task(id: term) {
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled, let client, !term.trimmingCharacters(in: .whitespaces).isEmpty else {
+            let query = term.trimmingCharacters(in: .whitespaces)
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            guard !Task.isCancelled, let client, !query.isEmpty else {
                 results = []
                 return
             }
-            results = (try? await client.search(term)) ?? []
+            let found = (try? await client.search(query)) ?? []
+            guard !Task.isCancelled, term.trimmingCharacters(in: .whitespaces) == query else { return }
+            results = found
         }
     }
 }

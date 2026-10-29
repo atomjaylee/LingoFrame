@@ -318,8 +318,11 @@ struct ItemDetailView: View {
     private func loadTMDB() async {
         guard let ref, let tmdb else { return }
         do {
-            info = try await tmdb.details(ref)
+            let loaded = try await tmdb.details(ref)
+            guard !Task.isCancelled, self.ref == ref else { return }
+            info = loaded
         } catch {
+            guard !Task.isCancelled else { return }
             // TMDB 连不上时仍然显示资源库里的信息，只在资源库也没有时提示。
             if match == nil { errorMessage = error.localizedDescription }
         }
@@ -328,14 +331,19 @@ struct ItemDetailView: View {
     private func loadEmby() async {
         guard let client, let item = match?.item else { return }
         do {
-            full = try await client.item(item.id)
+            let loaded = try await client.item(item.id)
+            guard !Task.isCancelled, match?.item.id == item.id else { return }
+            full = loaded
             if (full ?? item).kind == .series {
-                seasons = try await client.seasons(of: item.id)
+                let loadedSeasons = try await client.seasons(of: item.id)
+                guard !Task.isCancelled, match?.item.id == item.id else { return }
+                seasons = loadedSeasons
                 if seasonID == nil {
                     seasonID = seasons.first { ($0.userData?.unplayedItemCount ?? 0) > 0 }?.id ?? seasons.first?.id
                 }
             }
         } catch {
+            guard !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -343,9 +351,12 @@ struct ItemDetailView: View {
     private func loadEpisodes() async {
         guard let client, let item = match?.item, isSeries, let seasonID else { return }
         do {
-            episodes = try await client.episodes(of: item.id, season: seasonID)
+            let loaded = try await client.episodes(of: item.id, season: seasonID)
+            guard !Task.isCancelled, self.seasonID == seasonID else { return }
+            episodes = loaded
             episodesFailed = false
         } catch {
+            guard !Task.isCancelled, self.seasonID == seasonID else { return }
             episodesFailed = episodes.isEmpty
             errorMessage = error.localizedDescription
         }
@@ -354,7 +365,9 @@ struct ItemDetailView: View {
     /// 剧集的播放资源要从单集上取：分集列表里没有 MediaSources，单独再请求一次。
     private func loadFocusEpisode() async {
         guard let client, isSeries, let next = nextEpisode else { focusEpisode = nil; return }
-        focusEpisode = (try? await client.item(next.id)) ?? next
+        let loaded = (try? await client.item(next.id)) ?? next
+        guard !Task.isCancelled, nextEpisode?.id == next.id else { return }
+        focusEpisode = loaded
     }
 
     private func setPlayed(_ played: Bool, _ target: EmbyItem) async {

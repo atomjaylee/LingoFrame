@@ -201,8 +201,10 @@ struct HomeView: View {
         var all: [(String, EmbyItem)] = []
         for server in model.servers where server.state != .offline {
             let items = (try? await server.client.resumeItems()) ?? []
+            guard !Task.isCancelled else { return }
             all += items.map { (server.id, $0) }
         }
+        guard !Task.isCancelled else { return }
         resume = all.map { (serverID: $0.0, item: $0.1) }
     }
 }

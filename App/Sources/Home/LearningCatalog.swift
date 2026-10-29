@@ -80,18 +80,23 @@ final class RecommendationStore {
     private(set) var isLoading = false
     private(set) var errorMessage: String?
     @ObservationIgnored private var loadedClient: ObjectIdentifier?
+    @ObservationIgnored private var loadGeneration: UInt64 = 0
 
     func reset() {
+        loadGeneration &+= 1
         titles = [:]
         errorMessage = nil
         loadedClient = nil
+        isLoading = false
     }
 
     func load(using tmdb: TMDBClient) async {
         guard loadedClient != ObjectIdentifier(tmdb) else { return }
+        loadGeneration &+= 1
+        let generation = loadGeneration
         loadedClient = ObjectIdentifier(tmdb)
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == loadGeneration { isLoading = false } }
         var firstError: Error?
         await withTaskGroup(of: (String, Result<TMDBTitle?, Error>).self) { group in
             for entry in LearningCatalog.allEntries {
@@ -107,12 +112,17 @@ final class RecommendationStore {
                 }
             }
             for await (id, result) in group {
+                guard !Task.isCancelled, generation == loadGeneration else {
+                    group.cancelAll()
+                    break
+                }
                 switch result {
                 case .success(let title): titles[id] = title
                 case .failure(let error): firstError = firstError ?? error
                 }
             }
         }
+        guard !Task.isCancelled, generation == loadGeneration else { return }
         errorMessage = titles.isEmpty ? firstError?.localizedDescription : nil
         if titles.isEmpty { loadedClient = nil }
     }
