@@ -90,16 +90,17 @@ public actor TMDBClient {
 
     private func get<T: Decodable>(_ path: String, _ query: [String: String?], as type: T.Type) async throws -> T {
         guard !token.isEmpty else { throw TMDBError.missingCredential }
-        var components = URLComponents(url: config.apiBase.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: config.apiBase.appendingPathComponent(path), resolvingAgainstBaseURL: false)
+        else { throw TMDBError.network("接口地址格式不正确") }
         var items = query.compactMap { k, v in v.map { URLQueryItem(name: k, value: $0) } }.sorted { $0.name < $1.name }
         let usesBearer = token.count > 40
         if !usesBearer { items.append(URLQueryItem(name: "api_key", value: token)) }
         components.queryItems = items
-        let url = components.url!
+        guard let url = components.url else { throw TMDBError.network("接口地址格式不正确") }
         // 缓存键不含密钥。
         let key = path + "?" + items.filter { $0.name != "api_key" }.map { "\($0.name)=\($0.value ?? "")" }.joined(separator: "&")
 
-        let data = try await cachedData(key: key) { [session, token] in
+        let fetch: @Sendable () async throws -> Data = { [session, token] in
             var request = URLRequest(url: url, timeoutInterval: 15)
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             if usesBearer { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
@@ -107,6 +108,9 @@ public actor TMDBClient {
             do {
                 (data, response) = try await session.data(for: request)
             } catch {
+                if error is CancellationError || (error as? URLError)?.code == .cancelled {
+                    throw CancellationError()
+                }
                 throw TMDBError.network(error.localizedDescription)
             }
             switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
@@ -116,13 +120,22 @@ public actor TMDBClient {
             case let status: throw TMDBError.http(status)
             }
         }
+        let data = try await cachedData(key: key, fetch: fetch)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
-            Self.log.error("解码失败 \(path, privacy: .public): \(String(describing: error), privacy: .public)")
-            throw TMDBError.decoding(String(describing: T.self))
+            // 磁盘缓存可能因旧版本中断写入而损坏；清掉并立即重取一次，避免每次启动都失败。
+            invalidateCache(key: key)
+            let fresh = try await fetch()
+            store(fresh, key: key)
+            do {
+                return try decoder.decode(T.self, from: fresh)
+            } catch {
+                Self.log.error("解码失败 \(path, privacy: .public): \(String(describing: error), privacy: .public)")
+                throw TMDBError.decoding(String(describing: T.self))
+            }
         }
     }
 
@@ -140,12 +153,23 @@ public actor TMDBClient {
         inFlight[key] = task
         defer { inFlight[key] = nil }
         let data = try await task.value
+        store(data, key: key)
+        return data
+    }
+
+    private func store(_ data: Data, key: String) {
         memory[key] = data
-        if let file {
+        if let file = cacheDirectory?.appendingPathComponent(Self.hash(key) + ".json") {
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: file, options: .atomic)
         }
-        return data
+    }
+
+    private func invalidateCache(key: String) {
+        memory[key] = nil
+        if let file = cacheDirectory?.appendingPathComponent(Self.hash(key) + ".json") {
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     static func hash(_ s: String) -> String {

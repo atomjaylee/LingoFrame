@@ -30,8 +30,8 @@ public enum SubtitleParser {
     static func parseTime(_ raw: String) -> Int64? {
         let value = raw.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
         let fields = value.split(separator: ":")
-        guard (2...3).contains(fields.count) else { return nil }
-        let seconds = Double(fields.last!) ?? -1
+        guard (2...3).contains(fields.count), let last = fields.last else { return nil }
+        let seconds = Double(last) ?? -1
         let minutes = Int64(fields[fields.count - 2]) ?? -1
         let hours = fields.count == 3 ? Int64(fields[0]) ?? -1 : 0
         guard seconds >= 0, minutes >= 0, hours >= 0 else { return nil }

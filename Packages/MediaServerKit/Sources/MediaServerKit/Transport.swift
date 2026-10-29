@@ -60,7 +60,7 @@ enum EmbyCoding {
     static let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .custom { keys in
-            let raw = keys.last!.stringValue
+            let raw = keys.last?.stringValue ?? ""
             return AnyKey(raw.prefix(1).lowercased() + raw.dropFirst())
         }
         return d
@@ -69,7 +69,7 @@ enum EmbyCoding {
     static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.keyEncodingStrategy = .custom { keys in
-            let raw = keys.last!.stringValue
+            let raw = keys.last?.stringValue ?? ""
             return AnyKey(raw.prefix(1).uppercased() + raw.dropFirst())
         }
         return e
@@ -146,7 +146,10 @@ struct Transport: Sendable {
             do {
                 (data, response) = try await (url.isPrivateNetwork ? Self.direct : session).data(for: request)
             } catch {
-                if attempt == 2 || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                if error is CancellationError || (error as? URLError)?.code == .cancelled {
+                    throw CancellationError()
+                }
+                if attempt == 2 {
                     throw EmbyError.network(error.localizedDescription)
                 }
                 continue

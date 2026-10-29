@@ -203,6 +203,7 @@ extension TMDBTitle {
                            episodeCount: $0.episodeCount, posterPath: $0.posterPath, year: parseYear($0.airDate))
             },
             releaseDate: (raw.releaseDate ?? raw.firstAirDate).flatMap { $0.isEmpty ? nil : $0 },
-            countries: raw.originCountry?.isEmpty == false ? raw.originCountry! : (raw.productionCountries ?? []).map(\.iso31661))
+            countries: raw.originCountry.flatMap { $0.isEmpty ? nil : $0 }
+                ?? (raw.productionCountries ?? []).map(\.iso31661))
     }
 }

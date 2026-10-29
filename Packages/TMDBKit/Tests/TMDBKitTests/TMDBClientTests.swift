@@ -85,6 +85,22 @@ private let officeJSON = """
     #expect(Stub.calls.withLock { $0["bearer.test"] } == 1)
 }
 
+@Test func corruptedDiskCacheIsRefetchedImmediately() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let key = "search/tv?first_air_date_year=1994&language=zh-CN&query=Friends"
+    try Data("not-json".utf8).write(to: dir.appendingPathComponent(TMDBClient.hash(key) + ".json"))
+    let session = Stub.session(host: "corrupt.test") { _ in
+        (200, #"{"results":[{"id":1668,"name":"老友记","first_air_date":"1994-09-22"}]}"#)
+    }
+    let client = TMDBClient(token: "0123456789abcdef0123456789abcdef",
+                            config: config("corrupt.test"), session: session, cacheDirectory: dir)
+    let hits = try await client.search(.tv, query: "Friends", year: 1994)
+    #expect(hits.first?.ref.id == 1668)
+    #expect(Stub.calls.withLock { $0["corrupt.test"] } == 1)
+}
+
 @Test func errorsAreReadable() async {
     let session = Stub.session(host: "deny.test") { _ in (401, "{}") }
     await #expect(throws: TMDBError.unauthorized) {

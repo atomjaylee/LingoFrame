@@ -20,8 +20,9 @@ public struct LookupQuery: Hashable, Sendable {
         guard sentence.tokens.indices.contains(tokenRange.lowerBound),
               sentence.tokens.indices.contains(tokenRange.upperBound) else { return nil }
         let tokens = sentence.tokens[tokenRange]
+        guard let first = tokens.first, let last = tokens.last else { return nil }
         let utf16 = Array(sentence.text.utf16)
-        let surface = String(decoding: utf16[tokens.first!.textRange.lowerBound..<tokens.last!.textRange.upperBound],
+        let surface = String(decoding: utf16[first.textRange.lowerBound..<last.textRange.upperBound],
                              as: UTF16.self)
         let lemma = tokens.filter(\.isWord).map { $0.lemma ?? $0.text.lowercased() }.joined(separator: " ")
         self.init(surface: surface, lemma: lemma, sentence: sentence, tokenRange: tokenRange)
