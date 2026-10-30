@@ -67,8 +67,13 @@ struct NativePlayerEngineTests {
         defer { engine.stop(); window.close() }
 
         try await engine.load(url: h264, autoplay: false)
-        try await waitUntil { engine.state == .paused && engine.presentationSize.width > 0 }
+        try await waitUntil {
+            engine.state == .paused && engine.presentationSize.width > 0
+                && engine.diagnostics().startupMilliseconds != nil
+        }
         #expect(engine.presentationSize == CGSize(width: 640, height: 360))
+        #expect(engine.diagnostics().startupStage == "首帧已显示")
+        #expect(engine.diagnostics().startupMilliseconds ?? 0 > 0)
         let surface = host.subviews.first
 
         for size in [CGSize(width: 1_280, height: 720), CGSize(width: 800, height: 450),

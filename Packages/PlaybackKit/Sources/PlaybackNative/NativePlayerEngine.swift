@@ -4,6 +4,7 @@ import CoreGraphics
 import Foundation
 import LearningCore
 import Observation
+import os
 import PlaybackCore
 
 public struct NativeSubtitleImage: Identifiable, @unchecked Sendable {
@@ -62,6 +63,8 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     public private(set) var nativeSubtitleDescription: String?
     public private(set) var currentSubtitleText: String?
     public private(set) var currentSubtitleImages: [NativeSubtitleImage] = []
+    public private(set) var startupMilliseconds: Double?
+    public private(set) var startupStage = "未开始"
 
     public var rate: Double = 1 {
         didSet { backend.setRate(Float(rate)) }
@@ -85,18 +88,33 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     @ObservationIgnored private var nativeSubtitlesVisible = true
     @ObservationIgnored private var lastError: String?
     @ObservationIgnored private var segmentGeneration: UInt64 = 0
+    @ObservationIgnored private var startupStartedAt: ContinuousClock.Instant?
+    @ObservationIgnored private var startupGeneration: UInt64?
+    @ObservationIgnored private var startupContext = "直接加载"
+    @ObservationIgnored private let log = Logger(subsystem: "app.elenglish", category: "startup")
 
     public init() throws {
         backend = try AetherEngine()
         bindState()
     }
 
+    /// 从用户发起播放时开始计时；冷启动会包含媒体服务请求，预热启动只包含播放器加载。
+    public func beginStartupMeasurement(context: String) {
+        startupStartedAt = .now
+        startupGeneration = nil
+        startupMilliseconds = nil
+        startupStage = "准备片源"
+        startupContext = context
+    }
+
     public func load(_ source: PlaybackSource) async throws {
+        if startupStartedAt == nil { beginStartupMeasurement(context: "直接加载") }
         lastError = nil
         state = .loading
         let options = LoadOptions(
             httpHeaders: source.httpHeaders,
             declaredDurationSeconds: source.durationHint,
+            progressiveSegmentDelivery: true,
             autoplay: source.autoplay,
             escalatesToSoftwarePath: true)
         do {
@@ -106,6 +124,8 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         } catch {
             lastError = error.localizedDescription
             state = .failed(error.localizedDescription)
+            startupStage = "加载失败"
+            startupStartedAt = nil
             throw error
         }
     }
@@ -117,9 +137,13 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
                                       autoplay: autoplay))
     }
 
-    public nonisolated static func prewarm(url: URL, httpHeaders: [String: String] = [:]) async {
+    @discardableResult
+    public nonisolated static func prewarm(url: URL, httpHeaders: [String: String] = [:]) async -> Bool {
         _ = await AetherEngine.prewarm(url: url, httpHeaders: httpHeaders)
+        return AetherEngine.isPrewarmed(url: url)
     }
+
+    public nonisolated static func isPrewarmed(url: URL) -> Bool { AetherEngine.isPrewarmed(url: url) }
 
     public func play() { backend.play() }
     public func pause() { backend.pause() }
@@ -165,7 +189,9 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
             observedBitrate: telemetry?.networkThroughputMbps.map { $0 * 1_000_000 },
             droppedFrames: telemetry?.droppedFrameCount,
             playbackType: "Apple \(backend.playbackBackend.rawValue) / \(backend.activeVideoDecoder ?? "检测中")",
-            lastError: lastError)
+            lastError: lastError,
+            startupMilliseconds: startupMilliseconds,
+            startupStage: startupStage)
     }
 
     public func play(_ range: TimeRange, rate: Double) async throws {
@@ -203,6 +229,22 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
             case .seeking: break
             case .ended: state = .ended
             case .error(let message): state = .failed(message); lastError = message
+            }
+        }.store(in: &cancellables)
+
+        backend.$startupProgress.compactMap { $0 }.sink { [weak self] progress in
+            guard let self, let started = startupStartedAt else { return }
+            if startupGeneration == nil { startupGeneration = progress.generation }
+            guard startupGeneration == progress.generation else { return }
+            let elapsed = Self.milliseconds(started.duration(to: .now))
+            startupStage = Self.stageTitle(progress.stage)
+            log.info("起播 \(self.startupContext, privacy: .public) \(self.startupStage, privacy: .public) \(elapsed, format: .fixed(precision: 0))ms")
+            if progress.isComplete {
+                startupMilliseconds = elapsed
+                startupStartedAt = nil
+                #if DEBUG
+                NSLog("起播完成 %@ %.0fms", startupContext, elapsed)
+                #endif
             }
         }.store(in: &cancellables)
 
@@ -264,5 +306,24 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         let text = active.compactMap(\.text).joined(separator: "\n")
         currentSubtitleText = text.isEmpty ? nil : text
         currentSubtitleImages = active.compactMap(\.image)
+    }
+
+    private nonisolated static func milliseconds(_ duration: Duration) -> Double {
+        let components = duration.components
+        return Double(components.seconds) * 1_000 + Double(components.attoseconds) / 1_000_000_000_000_000
+    }
+
+    private nonisolated static func stageTitle(_ stage: StartupStage) -> String {
+        switch stage {
+        case .connecting: "连接片源"
+        case .openingContainer: "打开容器"
+        case .analyzingStreams: "分析轨道"
+        case .preparingDisplay: "准备显示"
+        case .selectingRoute: "选择播放路线"
+        case .buildingSession: "建立播放会话"
+        case .preparingPlayback: "准备播放"
+        case .awaitingFirstFrame: "等待首帧"
+        case .presenting: "首帧已显示"
+        }
     }
 }

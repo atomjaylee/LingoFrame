@@ -59,14 +59,19 @@ public struct PlaybackDiagnostics: Sendable {
     public var droppedFrames: Int?
     public var playbackType: String?
     public var lastError: String?
+    public var startupMilliseconds: Double?
+    public var startupStage: String?
 
     public init(indicatedBitrate: Double?, observedBitrate: Double?, droppedFrames: Int?,
-                playbackType: String?, lastError: String?) {
+                playbackType: String?, lastError: String?, startupMilliseconds: Double? = nil,
+                startupStage: String? = nil) {
         self.indicatedBitrate = indicatedBitrate
         self.observedBitrate = observedBitrate
         self.droppedFrames = droppedFrames
         self.playbackType = playbackType
         self.lastError = lastError
+        self.startupMilliseconds = startupMilliseconds
+        self.startupStage = startupStage
     }
 }
 

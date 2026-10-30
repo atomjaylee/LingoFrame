@@ -71,6 +71,7 @@ struct PreparedPlayback {
     var item: EmbyItem
     var stream: ResolvedStream
     var startAt: Double?
+    var isPrewarmed: Bool
 }
 
 @MainActor
@@ -100,6 +101,7 @@ final class AppModel {
     var playRequest: PlayRequest?
     var playRequestRevision: UInt64 = 0
     @ObservationIgnored private var preparedPlayback: PreparedPlayback?
+    @ObservationIgnored private var prewarmTask: Task<Void, Never>?
     @ObservationIgnored private var preparationGeneration: UInt64 = 0
 
     @ObservationIgnored private let accountStore: AccountStore
@@ -166,6 +168,8 @@ final class AppModel {
     /// 详情页后台预热：并行读取条目和播放信息，并预取片源开头字节。
     func preparePlayback(serverID: String, itemID: String) async {
         guard activeSession == nil, let client = server(serverID)?.client else { return }
+        prewarmTask?.cancel()
+        preparedPlayback = nil
         preparationGeneration &+= 1
         let generation = preparationGeneration
         do {
@@ -176,13 +180,17 @@ final class AppModel {
             guard activeSession == nil, generation == preparationGeneration else { return }
             let stream = try client.resolveOriginalStream(itemID: itemID, info: info)
             let start = item.resumePositionSeconds
-            preparedPlayback = PreparedPlayback(serverID: serverID, item: item, stream: stream, startAt: start)
+            preparedPlayback = PreparedPlayback(serverID: serverID, item: item, stream: stream,
+                                                startAt: start, isPrewarmed: false)
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, generation == self.preparationGeneration, self.activeSession == nil else { return }
                 await PlaybackSession.prefetchSubtitles(client: client, itemID: item.id, source: stream.mediaSource)
             }
-            await NativePlayerEngine.prewarm(url: stream.url)
+            // 不绑定详情页 View 的生命周期：用户点击播放导致页面消失时，已经开始的预热仍能完成。
+            prewarmTask = Task.detached(priority: .userInitiated) {
+                _ = await NativePlayerEngine.prewarm(url: stream.url)
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -191,14 +199,18 @@ final class AppModel {
         }
     }
 
-    func takePreparedPlayback(serverID: String, itemID: String, resume: Bool) -> PreparedPlayback? {
-        guard let preparedPlayback else { return nil }
+    func takePreparedPlayback(serverID: String, itemID: String, resume _: Bool) -> PreparedPlayback? {
+        guard var preparedPlayback else { return nil }
         guard preparedPlayback.serverID == serverID,
-              preparedPlayback.item.id == itemID,
-              resume || preparedPlayback.startAt == nil else {
+              preparedPlayback.item.id == itemID else {
+            prewarmTask?.cancel()
+            prewarmTask = nil
             self.preparedPlayback = nil
             return nil
         }
+        preparedPlayback.isPrewarmed = NativePlayerEngine.isPrewarmed(url: preparedPlayback.stream.url)
+        if !preparedPlayback.isPrewarmed { prewarmTask?.cancel() }
+        prewarmTask = nil
         self.preparedPlayback = nil
         return preparedPlayback
     }
@@ -206,6 +218,14 @@ final class AppModel {
     func showPlayer(_ request: PlayRequest, using _: OpenWindowAction) {
         // 详情页预热请求可能还在网络途中；先失效，避免它回来后覆盖用户刚点开的集数。
         preparationGeneration &+= 1
+        if case .emby(let serverID, let itemID, _) = request,
+           preparedPlayback?.serverID == serverID, preparedPlayback?.item.id == itemID {
+            // 匹配的预热由播放窗口接管。
+        } else {
+            prewarmTask?.cancel()
+            prewarmTask = nil
+            preparedPlayback = nil
+        }
         playRequest = request
         playRequestRevision &+= 1
         PlayerWindowController.shared.show(model: self)

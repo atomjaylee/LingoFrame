@@ -225,6 +225,8 @@ private struct PlaybackDebugPanel: View {
                         InfoRow("指示码率", d.indicatedBitrate.map { String(format: "%.2f Mbps", $0 / 1e6) } ?? "—")
                         InfoRow("实测吞吐", d.observedBitrate.map { String(format: "%.2f Mbps", $0 / 1e6) } ?? "—")
                         InfoRow("丢帧", d.droppedFrames.map(String.init) ?? "—")
+                        InfoRow("点击到首帧", d.startupMilliseconds.map { String(format: "%.0f ms", $0) } ?? "—")
+                        InfoRow("起播阶段", d.startupStage ?? "—")
                         InfoRow("类型", d.playbackType ?? "—")
                         if let error = d.lastError { InfoRow("最近错误", error) }
                     }

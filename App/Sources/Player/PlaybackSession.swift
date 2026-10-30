@@ -84,6 +84,8 @@ final class PlaybackSession {
     @ObservationIgnored private var lastRequest: PlayRequest?
     @ObservationIgnored private var loadGeneration: UInt64 = 0
     @ObservationIgnored private var jumpGeneration: UInt64 = 0
+    @ObservationIgnored private var nextPreparationTask: Task<Void, Never>?
+    @ObservationIgnored private var preparedNext: PreparedPlayback?
     private let profile = DeviceProfile.native
     private let log = Logger(subsystem: "app.elenglish", category: "session")
 
@@ -128,6 +130,7 @@ final class PlaybackSession {
             let generation = beginLoad()
             finishCurrent()
             guard generation == loadGeneration else { return }
+            engine.beginStartupMeasurement(context: "本地文件")
             errorMessage = nil
             localURL = url
             do {
@@ -150,6 +153,13 @@ final class PlaybackSession {
     }
 
     func play(itemID: String, resume: Bool) async {
+        if let preparedNext, preparedNext.item.id == itemID {
+            self.preparedNext = nil
+            nextPreparationTask?.cancel()
+            nextPreparationTask = nil
+            await play(prepared: preparedNext, resume: resume)
+            return
+        }
         guard let client else {
             errorMessage = "请先登录 Emby"
             return
@@ -157,6 +167,7 @@ final class PlaybackSession {
         let generation = beginLoad()
         finishCurrent()
         guard generation == loadGeneration else { return }
+        engine.beginStartupMeasurement(context: "Emby 冷启动")
         errorMessage = nil
         if let serverID {
             lastRequest = .emby(serverID: serverID, itemID: itemID, resume: resume)
@@ -168,25 +179,27 @@ final class PlaybackSession {
             #endif
         }
         do {
-            let item = try await client.item(itemID)
+            // 原文件直放不依赖 StartTimeTicks；条目与播放信息并行请求，冷启动少等一次网络往返。
+            async let itemRequest = client.item(itemID)
+            async let infoRequest = client.playbackInfo(itemID: itemID, profile: profile)
+            let (item, info) = try await (itemRequest, infoRequest)
             guard generation == loadGeneration else { return }
-            mark("条目")
+            mark("条目与播放信息")
             self.item = item
             let start = resume ? item.resumePositionSeconds : nil
-            let info = try await client.playbackInfo(itemID: itemID, startSeconds: start, profile: profile)
-            guard generation == loadGeneration else { return }
-            mark("播放信息")
             let stream = try client.resolveOriginalStream(itemID: itemID, info: info)
             self.stream = stream
             loadSubtitles(itemID: item.id, source: stream.mediaSource)
             playMode = "Apple 原生显示管线"
             log.info("播放 \(itemID, privacy: .public) 路线 Apple 原生显示")
+            mark("开始播放器")
             try await engine.load(url: stream.url, id: item.id, startAt: start, durationHint: durationHint)
             startReporting(generation: generation)
             if item.kind == .episode, let seriesID = item.seriesId {
                 let loaded = (try? await client.episodes(of: seriesID, season: item.seasonId)) ?? []
                 guard generation == loadGeneration else { return }
                 siblings = loaded
+                prepareNextItem(generation: generation)
             } else {
                 siblings = []
             }
@@ -209,13 +222,14 @@ final class PlaybackSession {
         let generation = beginLoad()
         finishCurrent()
         guard generation == loadGeneration else { return }
+        engine.beginStartupMeasurement(context: prepared.isPrewarmed ? "Emby 预热命中" : "Emby 元数据命中")
         errorMessage = nil
         lastRequest = .emby(serverID: prepared.serverID, itemID: prepared.item.id, resume: resume)
         item = prepared.item
         stream = prepared.stream
         let start = resume ? prepared.startAt : nil
         loadSubtitles(itemID: prepared.item.id, source: prepared.stream.mediaSource)
-        playMode = "Apple 原生显示管线（已预热）"
+        playMode = prepared.isPrewarmed ? "Apple 原生显示管线（预热命中）" : "Apple 原生显示管线（元数据命中）"
         do {
             try await engine.load(url: prepared.stream.url, id: prepared.item.id,
                                   startAt: start, durationHint: durationHint)
@@ -229,6 +243,7 @@ final class PlaybackSession {
             let loaded = (try? await client.episodes(of: seriesID, season: prepared.item.seasonId)) ?? []
             guard generation == loadGeneration else { return }
             siblings = loaded
+            prepareNextItem(generation: generation)
         } else {
             siblings = []
         }
@@ -276,6 +291,9 @@ final class PlaybackSession {
         localURL = nil
         subtitleTask?.cancel()
         ticker?.cancel()
+        nextPreparationTask?.cancel()
+        nextPreparationTask = nil
+        preparedNext = nil
         ticker = nil
         currentLine = nil
         currentSecondary = nil
@@ -286,6 +304,37 @@ final class PlaybackSession {
         secondaryCues = []
         subtitleNote = nil
         if let stopped { Task { await transmit(stopped, as: .stopped) } }
+    }
+
+    /// 当前集稳定播放后提前解析下一集，并利用空闲网络连接预取开头 8 MB。
+    private func prepareNextItem(generation: UInt64) {
+        nextPreparationTask?.cancel()
+        preparedNext = nil
+        guard let client, let serverID, let next = nextItem else { return }
+        nextPreparationTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled, generation == self.loadGeneration else { return }
+            do {
+                async let itemRequest = client.item(next.id)
+                async let infoRequest = client.playbackInfo(itemID: next.id,
+                                                            startSeconds: next.resumePositionSeconds,
+                                                            profile: profile)
+                let (item, info) = try await (itemRequest, infoRequest)
+                guard !Task.isCancelled, generation == loadGeneration else { return }
+                let stream = try client.resolveOriginalStream(itemID: item.id, info: info)
+                preparedNext = PreparedPlayback(serverID: serverID, item: item, stream: stream,
+                                                startAt: item.resumePositionSeconds, isPrewarmed: false)
+                let warmed = await NativePlayerEngine.prewarm(url: stream.url)
+                guard !Task.isCancelled, generation == loadGeneration,
+                      preparedNext?.item.id == item.id else { return }
+                preparedNext?.isPrewarmed = warmed
+                log.info("下一集准备完成 \(item.id, privacy: .public) 预热 \(warmed, privacy: .public)")
+            } catch is CancellationError {
+                return
+            } catch {
+                log.debug("下一集准备失败 \(next.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     // MARK: 字幕
