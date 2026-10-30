@@ -4,6 +4,18 @@ import Testing
 
 private let registered: Set<String> = [PanelIDs.mediaInfo, PanelIDs.episodes, PanelIDs.playbackDebug]
 
+@Test func videoWindowUsesNativeResolutionAndFitsTheScreen() {
+    #expect(VideoWindowSizing.contentSize(for: CGSize(width: 1_280, height: 720),
+                                          backingScale: 1, maximum: CGSize(width: 1_600, height: 900))
+        == CGSize(width: 1_280, height: 720))
+    #expect(VideoWindowSizing.contentSize(for: CGSize(width: 1_920, height: 1_080),
+                                          backingScale: 2, maximum: CGSize(width: 1_600, height: 900))
+        == CGSize(width: 960, height: 540))
+    #expect(VideoWindowSizing.contentSize(for: CGSize(width: 3_840, height: 2_160),
+                                          backingScale: 2, maximum: CGSize(width: 1_600, height: 900))
+        == CGSize(width: 1_600, height: 900))
+}
+
 @Test func showMoveHideKeepsPanelsInOnePlace() {
     var layout = WorkspaceLayout()
     layout.show(PanelIDs.mediaInfo, defaultPlacement: .trailing)

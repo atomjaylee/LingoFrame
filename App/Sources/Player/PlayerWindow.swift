@@ -136,6 +136,7 @@ private struct PlayerScreen: View {
     @State private var mouseInside = false
     @State private var overControls = false
     @State private var lookup: WordLookup?
+    @State private var fittedVideoSize: CGSize = .zero
 
     var body: some View {
         ZStack {
@@ -176,24 +177,26 @@ private struct PlayerScreen: View {
         .onChange(of: window) { _, _ in fitWindow(to: session.engine.presentationSize) }
     }
 
-    /// 像 Infuse 一样让窗口比例跟视频一致：宽度不变、按视频比例调高度（放不下就整体缩小），之后拖动缩放也保持比例。
+    /// 首帧按视频实际分辨率设置窗口；超出屏幕时等比例缩小，之后用户拖动只锁定比例。
     private func fitWindow(to size: CGSize) {
         guard let window, size.width > 0, size.height > 0, !window.styleMask.contains(.fullScreen) else { return }
         PlayerWindowController.shared.setAspectRatio(size)
-        let ratio = size.height / size.width
+        guard size != fittedVideoSize else { return }
+        fittedVideoSize = size
         let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? window.frame
+        let maximum = CGSize(width: max(720, visible.width - 80), height: max(332, visible.height - 80))
+        let contentSize = VideoWindowSizing.contentSize(for: size,
+                                                        backingScale: window.backingScaleFactor,
+                                                        maximum: maximum)
+        guard contentSize != .zero else { return }
+        let frameSize = window.frameRect(forContentRect: CGRect(origin: .zero, size: contentSize)).size
         var frame = window.frame
-        var width = frame.width
-        var height = (width * ratio).rounded()
-        if height > visible.height {
-            height = visible.height
-            width = (height / ratio).rounded()
-        }
-        guard abs(height - frame.height) > 1 || abs(width - frame.width) > 1 else { return }
-        // 保持窗口顶边位置不动。
-        frame.origin.y += frame.height - height
-        frame.size = CGSize(width: width, height: height)
-        frame.origin.y = max(frame.origin.y, visible.minY)
+        guard abs(frameSize.height - frame.height) > 1 || abs(frameSize.width - frame.width) > 1 else { return }
+        frame.origin.x += (frame.width - frameSize.width) / 2
+        frame.origin.y += frame.height - frameSize.height
+        frame.size = frameSize
+        frame.origin.x = min(max(frame.origin.x, visible.minX), max(visible.minX, visible.maxX - frame.width))
+        frame.origin.y = min(max(frame.origin.y, visible.minY), max(visible.minY, visible.maxY - frame.height))
         window.setFrame(frame, display: true)
     }
 
