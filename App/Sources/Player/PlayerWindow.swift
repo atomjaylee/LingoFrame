@@ -509,7 +509,7 @@ private struct ControlBar: View {
                             .accessibilityLabel("音量")
                         Spacer()
                     }
-                    HStack(spacing: 14) {
+                    HStack(spacing: compact ? 4 : 14) {
                         icon("backward.end.fill", size: 17, label: "上一集") {
                             if let prev = session.previousItem { Task { await session.play(itemID: prev.id, resume: true) } }
                         }
@@ -528,16 +528,15 @@ private struct ControlBar: View {
                     }
                     HStack(spacing: compact ? 6 : 8) {
                         Spacer()
-                        speedMenu
-                        if !compact {
-                            separator
-                            if engine.audioOptions.count > 1 { audioTrackMenu }
-                            if !engine.subtitleOptions.isEmpty { subtitleTrackMenu }
-                            separator
+                        speedMenu(compact: compact)
+                        if !compact { separator }
+                        if !engine.audioOptions.isEmpty { audioTrackMenu }
+                        if !engine.subtitleOptions.isEmpty { subtitleTrackMenu }
+                        if !compact { separator }
+                        icon("viewfinder", size: 17,
+                             label: window?.styleMask.contains(.fullScreen) == true ? "退出全屏（回车）" : "全屏（回车）") {
+                            window?.toggleFullScreen(nil)
                         }
-                        settingsMenu
-                        icon(window?.styleMask.contains(.fullScreen) == true ? "arrow.down.right.and.arrow.up.left"
-                             : "arrow.up.left.and.arrow.down.right", size: 16, label: "全屏（回车）") { window?.toggleFullScreen(nil) }
                         PlayerControlButton(systemName: "list.bullet", size: 17, label: "打开字幕窗口") {
                             openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                         }
@@ -561,7 +560,7 @@ private struct ControlBar: View {
         Rectangle().fill(.white.opacity(0.24)).frame(width: 1, height: 18)
     }
 
-    private var speedMenu: some View {
+    private func speedMenu(compact: Bool) -> some View {
         Menu { rateOptions } label: {
             HStack(spacing: 5) {
                 Text(engine.rate == engine.rate.rounded() ? String(format: "%.1f×", engine.rate)
@@ -570,7 +569,7 @@ private struct ControlBar: View {
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
             }
             .font(.system(size: 12, weight: .medium))
-            .frame(width: 64, height: 34)
+            .frame(width: compact ? 54 : 64, height: 34)
             .contentShape(Rectangle())
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
@@ -587,27 +586,17 @@ private struct ControlBar: View {
         }
     }
 
-    /// 窄窗口收起独立的音轨、字幕图标，仍可在设置中使用全部选项。
-    private var settingsMenu: some View {
-        Menu {
-            Menu("播放速度") { rateOptions }
-            if !engine.audioOptions.isEmpty { Menu("音轨") { audioOptions } }
-            if !engine.subtitleOptions.isEmpty { Menu("字幕") { subtitleOptions } }
-        } label: {
-            HoverControlIcon(systemName: "gearshape.fill", size: 17)
-        }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-        .help("播放设置")
-        .accessibilityLabel("播放设置")
-    }
-
     private var audioOptions: some View {
-        ForEach(engine.audioOptions) { option in
-            Button { engine.selectAudio(option.id) } label: {
-                if option.id == engine.selectedAudioID { Label(option.title, systemImage: "checkmark") }
-                else { Text(option.title) }
+        Picker("音轨", selection: Binding<Int?>(
+            get: { engine.selectedAudioID },
+            set: { if let id = $0 { engine.selectAudio(id) } }
+        )) {
+            ForEach(engine.audioOptions) { option in
+                Text(option.title + (option.id == engine.selectedAudioID ? "（使用中）" : ""))
+                    .tag(Optional(option.id))
             }
         }
+        .pickerStyle(.inline)
     }
 
     private var audioTrackMenu: some View {
@@ -615,22 +604,31 @@ private struct ControlBar: View {
             HoverControlIcon(systemName: "waveform", size: 16)
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-        .help("选择音轨")
+        .help("当前音轨：" + (engine.audioOptions.first { $0.id == engine.selectedAudioID }?.title ?? "未选择"))
         .accessibilityLabel("选择音轨")
     }
 
-    @ViewBuilder private var subtitleOptions: some View {
-        Button { session.selectPlaybackSubtitle(nil) } label: {
-            if engine.selectedSubtitleID == nil { Label("关闭", systemImage: "checkmark") }
-            else { Text("关闭") }
+    /// 学习字幕由自绘层显示时，以实际主字幕为准，不沿用内核的默认轨道。
+    private var currentSubtitleID: Int? {
+        guard session.subtitleMode != .off else { return nil }
+        if !session.usesNativePlaybackSubtitles, !session.primaryCues.isEmpty {
+            return session.primarySubtitle?.id
         }
-        Divider()
-        ForEach(engine.subtitleOptions) { option in
-            Button { session.selectPlaybackSubtitle(option.id) } label: {
-                if option.id == engine.selectedSubtitleID { Label(option.title, systemImage: "checkmark") }
-                else { Text(option.title) }
+        return engine.selectedSubtitleID
+    }
+
+    private var subtitleOptions: some View {
+        Picker("字幕", selection: Binding<Int?>(
+            get: { currentSubtitleID },
+            set: { session.selectPlaybackSubtitle($0) }
+        )) {
+            Text(currentSubtitleID == nil ? "关闭（当前）" : "关闭").tag(nil as Int?)
+            ForEach(engine.subtitleOptions) { option in
+                Text(option.title + (option.id == currentSubtitleID ? "（使用中）" : ""))
+                    .tag(Optional(option.id))
             }
         }
+        .pickerStyle(.inline)
     }
 
     private var subtitleTrackMenu: some View {
@@ -638,7 +636,7 @@ private struct ControlBar: View {
             HoverControlIcon(systemName: "captions.bubble.fill", size: 16)
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-        .help("选择字幕")
+        .help("当前字幕：" + (engine.subtitleOptions.first { $0.id == currentSubtitleID }?.title ?? "关闭"))
         .accessibilityLabel("选择字幕")
     }
 
