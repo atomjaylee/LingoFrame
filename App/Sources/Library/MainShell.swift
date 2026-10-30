@@ -39,6 +39,7 @@ struct MainShell: View {
     @Environment(\.theme) private var theme
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var section: ShellSection = .home
     @State private var path = NavigationPath()
@@ -49,7 +50,7 @@ struct MainShell: View {
         collapsed ? 128 : RexChrome.contentLeading
     }
 
-    private let sidebarAnimation = Animation.smooth(duration: 0.28)
+    private var sidebarAnimation: Animation? { reduceMotion ? nil : .easeOut(duration: 0.12) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -70,15 +71,16 @@ struct MainShell: View {
                 .opacity(collapsed ? 0 : 1)
                 .allowsHitTesting(!collapsed)
                 .accessibilityHidden(collapsed)
+                .animation(sidebarAnimation, value: collapsed)
 
             WindowChromeControls(window: window, collapsed: collapsed) {
-                withAnimation(sidebarAnimation) { collapsed.toggle() }
+                collapsed.toggle()
             }
             .padding(.leading, 22)
             .padding(.top, 17)
             .ignoresSafeArea(edges: .top)
+            .animation(sidebarAnimation, value: collapsed)
         }
-        .animation(sidebarAnimation, value: collapsed)
         .background(WindowAccessor { window = $0 })
         .onChange(of: section) { path = NavigationPath() }
         .task { await model.refreshAll() }
