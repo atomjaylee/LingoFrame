@@ -239,7 +239,7 @@ private struct PlayerScreen: View {
             }
             LinearGradient(colors: [.clear, .black.opacity(0.18), .black.opacity(0.72)],
                            startPoint: .top, endPoint: .bottom)
-                .frame(height: 180)
+                .frame(height: 220)
                 .frame(maxHeight: .infinity, alignment: .bottom)
                 .opacity(controlsVisible ? 1 : 0)
                 .allowsHitTesting(false)
@@ -271,7 +271,7 @@ private struct PlayerScreen: View {
                         overControls = $0
                         if $0 { hideTask?.cancel() } else { scheduleHide(after: 0.7) }
                     }
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 10)
                     .opacity(controlsVisible ? 1 : 0)
                     .offset(y: controlsVisible ? 0 : 10)
             }
@@ -480,8 +480,8 @@ private struct ControlBar: View {
     private var engine: NativePlayerEngine { session.engine }
 
     var body: some View {
-        VStack(spacing: 7) {
-            HStack(spacing: 10) {
+        VStack(spacing: 12) {
+            HStack(spacing: 14) {
                 TimeText(engine: engine, remaining: false)
                 Scrubber(engine: engine, isScrubbing: $isScrubbing)
                 TimeText(engine: engine, remaining: true)
@@ -494,44 +494,44 @@ private struct ControlBar: View {
                     }
                     ThinSlider(value: Binding(get: { engine.isMuted ? 0 : Double(engine.volume) },
                                               set: { engine.volume = Float($0); engine.isMuted = false }))
-                        .frame(width: 92)
+                        .frame(width: 120)
                         .accessibilityLabel("音量")
                     Spacer()
                 }
-                HStack(spacing: 10) {
-                    icon("backward.end.fill", size: 15, label: "上一集") {
+                HStack(spacing: 14) {
+                    icon("backward.end.fill", size: 17, label: "上一集") {
                         if let prev = session.previousItem { Task { await session.play(itemID: prev.id, resume: true) } }
                     }
                     .disabled(session.previousItem == nil)
                     .opacity(session.previousItem == nil ? 0.35 : 1)
-                    icon("gobackward.10", size: 18, label: "后退 10 秒（⇧←）") { session.seek(by: -10) }
-                    PlayerControlButton(systemName: engine.state == .playing ? "pause.fill" : "play.fill", size: 20,
+                    icon("gobackward.10", size: 20, label: "后退 10 秒（⇧←）") { session.seek(by: -10) }
+                    PlayerControlButton(systemName: engine.state == .playing ? "pause.fill" : "play.fill", size: 22,
                                         label: engine.state == .playing ? "暂停（空格）" : "播放（空格）",
                                         prominent: true) { session.togglePlay() }
-                    icon("goforward.10", size: 18, label: "前进 10 秒（⇧→）") { session.seek(by: 10) }
-                    icon("forward.end.fill", size: 15, label: "下一集") {
+                    icon("goforward.10", size: 20, label: "前进 10 秒（⇧→）") { session.seek(by: 10) }
+                    icon("forward.end.fill", size: 17, label: "下一集") {
                         if let next = session.nextItem { Task { await session.play(itemID: next.id, resume: true) } }
                     }
                     .disabled(session.nextItem == nil)
                     .opacity(session.nextItem == nil ? 0.35 : 1)
                 }
-                HStack(spacing: 6) {
+                HStack(spacing: 10) {
                     Spacer()
                     if !engine.subtitleOptions.isEmpty { subtitleTrackMenu }
                     if engine.audioOptions.count > 1 { audioTrackMenu }
                     settingsMenu
                     icon(window?.styleMask.contains(.fullScreen) == true ? "arrow.down.right.and.arrow.up.left"
-                         : "arrow.up.left.and.arrow.down.right", size: 15, label: "全屏（回车）") { window?.toggleFullScreen(nil) }
-                    PlayerControlButton(systemName: "list.bullet", size: 15, label: "打开字幕窗口") {
+                         : "arrow.up.left.and.arrow.down.right", size: 16, label: "全屏（回车）") { window?.toggleFullScreen(nil) }
+                    PlayerControlButton(systemName: "list.bullet", size: 17, label: "打开字幕窗口") {
                         openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                     }
                 }
             }
-            .frame(height: 36)
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 22)
-        .frame(maxWidth: 900)
+        .padding(.horizontal, 30)
+        .padding(.bottom, 4)
+        .frame(maxWidth: 980)
     }
 
     private func icon(_ name: String, size: Double, label: String, action: @escaping () -> Void) -> some View {
@@ -552,7 +552,7 @@ private struct ControlBar: View {
                 }
             }
         } label: {
-            HoverControlIcon(systemName: "gearshape.fill", size: 15)
+            HoverControlIcon(systemName: "gearshape.fill", size: 17)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -572,7 +572,7 @@ private struct ControlBar: View {
                 }
             }
         } label: {
-            HoverControlIcon(systemName: "speaker.wave.2.fill", size: 15)
+            HoverControlIcon(systemName: "speaker.wave.2.fill", size: 16)
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
         .help("选择音轨")
@@ -597,7 +597,7 @@ private struct ControlBar: View {
                 }
             }
         } label: {
-            HoverControlIcon(systemName: "captions.bubble.fill", size: 15)
+            HoverControlIcon(systemName: "captions.bubble.fill", size: 16)
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
         .help("选择字幕")
@@ -620,7 +620,7 @@ private struct PlayerControlButton: View {
             Image(systemName: systemName)
                 .font(.system(size: size, weight: .semibold))
                 .foregroundStyle(foreground)
-                .frame(width: prominent ? 36 : 30, height: prominent ? 36 : 30)
+                .frame(width: prominent ? 42 : 34, height: prominent ? 42 : 34)
                 .background(.white.opacity(hovering ? 0.2 : prominent ? 0.1 : 0), in: Circle())
                 .contentShape(Circle())
                 .scaleEffect(hovering ? 1.06 : 1)
@@ -642,7 +642,7 @@ private struct HoverControlIcon: View {
     var body: some View {
         Image(systemName: systemName)
             .font(.system(size: size, weight: .semibold))
-            .frame(width: 30, height: 30)
+            .frame(width: 34, height: 34)
             .background(.white.opacity(hovering ? 0.2 : 0), in: Circle())
             .contentShape(Circle())
             .scaleEffect(hovering ? 1.06 : 1)
@@ -651,7 +651,7 @@ private struct HoverControlIcon: View {
     }
 }
 
-/// 细滑块：3 点高的轨道 + 12 点白色圆点，用于音量。
+/// 细滑块：4 点高的轨道 + 16 点白色圆点，用于音量。
 private struct ThinSlider: View {
     @Binding var value: Double
 
@@ -659,16 +659,16 @@ private struct ThinSlider: View {
         GeometryReader { geo in
             let v = min(max(value, 0), 1)
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.28)).frame(height: 3)
-                Capsule().fill(.white).frame(width: max(3, geo.size.width * v), height: 3)
-                Circle().fill(.white).frame(width: 12, height: 12).shadow(color: .black.opacity(0.4), radius: 1.5, y: 1)
-                    .offset(x: geo.size.width * v - 6)
+                Capsule().fill(.white.opacity(0.28)).frame(height: 4)
+                Capsule().fill(.white).frame(width: max(4, geo.size.width * v), height: 4)
+                Circle().fill(.white).frame(width: 16, height: 16).shadow(color: .black.opacity(0.4), radius: 1.5, y: 1)
+                    .offset(x: geo.size.width * v - 8)
             }
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { g in value = min(max(g.location.x / geo.size.width, 0), 1) })
         }
-        .frame(height: 14)
+        .frame(height: 18)
     }
 }
 
@@ -704,20 +704,20 @@ private struct Scrubber: View {
             let duration = max(engine.duration, 1)
             let played = min(max((isScrubbing ? dragValue : engine.currentTime) / duration, 0), 1)
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.18)).frame(height: 3)
+                Capsule().fill(.white.opacity(0.18)).frame(height: 4)
                 ForEach(engine.bufferedRanges, id: \.self) { range in
                     let start = min(max(range.lowerBound / duration, 0), 1)
                     let end = min(max(range.upperBound / duration, start), 1)
                     Capsule().fill(.white.opacity(0.72))
-                        .frame(width: geo.size.width * (end - start), height: 3)
+                        .frame(width: geo.size.width * (end - start), height: 4)
                         .offset(x: geo.size.width * start)
                 }
                 if played > 0 {
                     Capsule().fill(theme.colors.accentAmber.color)
-                        .frame(width: max(3, geo.size.width * played), height: 3)
+                        .frame(width: max(4, geo.size.width * played), height: 4)
                 }
-                Circle().fill(.white).frame(width: 12, height: 12).shadow(color: .black.opacity(0.4), radius: 1.5, y: 1)
-                    .offset(x: geo.size.width * played - 6)
+                Circle().fill(.white).frame(width: 16, height: 16).shadow(color: .black.opacity(0.4), radius: 1.5, y: 1)
+                    .offset(x: geo.size.width * played - 8)
             }
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
@@ -733,7 +733,7 @@ private struct Scrubber: View {
                     }
                 })
         }
-        .frame(height: 14)
+        .frame(height: 18)
         .disabled(engine.duration <= 0)
         .accessibilityElement()
         .accessibilityLabel("播放进度")
@@ -753,8 +753,8 @@ private struct TimeText: View {
 
     var body: some View {
         Text(remaining ? "-" + TimeFormat.clock(max(engine.duration - engine.currentTime, 0)) : TimeFormat.clock(engine.currentTime))
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 12, weight: .semibold))
             .monospacedDigit()
-            .frame(minWidth: 40, alignment: remaining ? .trailing : .leading)
+            .frame(minWidth: 44, alignment: remaining ? .trailing : .leading)
     }
 }
