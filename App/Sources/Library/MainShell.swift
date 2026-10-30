@@ -68,18 +68,19 @@ struct MainShell: View {
                 .accessibilityLabel("展开侧边栏")
                 .padding(.leading, 84)
                 .padding(.top, 10)
+
+                WindowTrafficLights(window: window)
+                    .padding(.leading, 22)
+                    .padding(.top, 17)
+                    .ignoresSafeArea(edges: .top)
             } else {
-                Sidebar(section: $section, collapse: { withAnimation(.easeOut(duration: 0.2)) { collapsed = true } })
+                Sidebar(section: $section, window: window,
+                        collapse: { withAnimation(.easeOut(duration: 0.2)) { collapsed = true } })
                     .frame(width: RexChrome.sidebarWidth)
                     .padding(RexChrome.sidebarInset)
                     .ignoresSafeArea(edges: .top)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
-
-            WindowTrafficLights(window: window)
-                .padding(.leading, 22)
-                .padding(.top, 17)
-                .ignoresSafeArea(edges: .top)
         }
         .background(WindowAccessor { window = $0 })
         .onChange(of: section) { path = NavigationPath() }
@@ -242,13 +243,16 @@ private struct WindowTrafficLights: View {
 /// 照抄 Rex：搜索 / 发现 / 学习三组，每行 40 高、15 号半粗字，选中行浅白底；设置固定在最底下。
 private struct Sidebar: View {
     @Binding var section: ShellSection
+    let window: NSWindow?
     let collapse: () -> Void
     @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Spacer().frame(width: 72)
+            HStack(spacing: 0) {
+                WindowTrafficLights(window: window)
+                    .padding(.leading, 4)
+                Spacer().frame(width: 28)
                 Button(action: collapse) { Image(systemName: "sidebar.left").font(.system(size: 15)) }
                     .buttonStyle(.plain)
                     .frame(width: 26, height: 26)
