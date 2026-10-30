@@ -21,9 +21,11 @@ enum PlayerPanels {
 }
 
 private struct TranscriptFloatingPanel: View {
+    @Environment(AppModel.self) private var model
     @Environment(PlaybackSession.self) private var session: PlaybackSession?
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var positioned = false
+    @State private var keyMonitor = KeyMonitor()
 
     var body: some View {
         Group {
@@ -31,26 +33,38 @@ private struct TranscriptFloatingPanel: View {
                 LearningPanel(session: session) {
                     dismissWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                 }
-                .background(WindowAccessor { configure($0, beside: session.windowTitle) })
+                .background(WindowAccessor { configure($0, session: session) })
             } else {
                 NoSessionView()
             }
         }
+        .onDisappear { keyMonitor.stop() }
     }
 
-    private func configure(_ panel: NSWindow?, beside playerTitle: String) {
+    private func configure(_ panel: NSWindow?, session: PlaybackSession) {
         guard let panel else { return }
         panel.titleVisibility = .hidden
-        panel.styleMask = [.borderless, .resizable]
+        // 保留有标题窗口的焦点能力，用全尺寸内容隐藏原生标题栏。
+        panel.styleMask = [.titled, .resizable, .fullSizeContentView]
+        panel.titlebarAppearsTransparent = true
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            panel.standardWindowButton(button)?.isHidden = true
+        }
         panel.isOpaque = false
-        panel.backgroundColor = .clear
+        panel.backgroundColor = NSColor(white: 0.075, alpha: 1)
         panel.hasShadow = true
         panel.isMovableByWindowBackground = true
+        panel.contentMinSize = NSSize(width: 380, height: 660)
 
         guard !positioned,
-              let player = NSApp.windows.first(where: { $0 !== panel && $0.title == playerTitle }),
+              let player = NSApp.windows.first(where: { $0 !== panel && $0.title == session.windowTitle }),
               let visible = player.screen?.visibleFrame else { return }
         positioned = true
+        keyMonitor.start(window: panel) { chord in
+            guard let command = model.bindings.command(for: chord) else { return false }
+            return PlayerCommands.perform(command, session: session, window: player)
+        }
+        panel.setContentSize(NSSize(width: 480, height: min(720, visible.height)))
         let gap: Double = 8
         let panelY = min(player.frame.maxY - panel.frame.height, visible.maxY - panel.frame.height)
         let rightX = player.frame.maxX + gap
