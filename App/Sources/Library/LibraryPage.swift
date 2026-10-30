@@ -150,7 +150,7 @@ private struct ServerCard: View {
     }
 }
 
-/// 一台服务器里的媒体库。
+/// 一台服务器里的媒体库：直接展开每个媒体库的片目，按最新入库顺序横向浏览。
 struct ServerLibrariesView: View {
     let serverID: String
     @Environment(AppModel.self) private var model
@@ -160,7 +160,7 @@ struct ServerLibrariesView: View {
     var body: some View {
         let server = model.server(serverID)
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 28) {
                 HStack(spacing: 14) {
                     Button { dismiss() } label: { Image(systemName: "chevron.left") }
                         .buttonStyle(RexBackButtonStyle())
@@ -172,12 +172,9 @@ struct ServerLibrariesView: View {
                         Text(server.state == .offline ? (server.errorMessage ?? "服务器无响应") : "正在读取媒体库…")
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
                     }
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 16)], alignment: .leading, spacing: 16) {
-                        ForEach(server.libraries) { lib in
-                            NavigationLink(value: Route.library(serverID: server.id, library: lib)) {
-                                LibraryTile(library: lib, client: server.client)
-                            }
-                            .buttonStyle(.plain)
+                    LazyVStack(alignment: .leading, spacing: 34) {
+                        ForEach(server.libraries) { library in
+                            LibraryShelf(serverID: server.id, library: library, client: server.client)
                         }
                     }
                 }
@@ -190,32 +187,102 @@ struct ServerLibrariesView: View {
     }
 }
 
-private struct LibraryTile: View {
+private struct LibraryShelf: View {
+    let serverID: String
     let library: EmbyItem
     let client: EmbyClient
     @Environment(\.theme) private var theme
-    @State private var isHovered = false
+
+    @State private var items: [EmbyItem] = []
+    @State private var total: Int?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    private let pageSize = 30
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.metrics.space(2)) {
-            RemoteImage(url: client.imageURL(for: library, type: .primary, maxWidth: 640), maxPixelSize: 640)
-                .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                .overlay {
-                    if library.imageTag(.primary) == nil {
-                        Image(systemName: library.collectionType == "movies" ? "film" : "tv")
-                            .font(.system(size: 30, weight: .light))
-                            .foregroundStyle(theme.colors.inkMuted.color)
-                    }
+        VStack(alignment: .leading, spacing: 12) {
+            NavigationLink(value: Route.library(serverID: serverID, library: library)) {
+                HStack(spacing: 7) {
+                    Text(library.displayName)
+                        .font(.system(size: 17, weight: .semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.secondary)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusMd, style: .continuous))
-                .scaleEffect(isHovered ? 1.02 : 1)
-                .animation(.easeOut(duration: 0.15), value: isHovered)
-            Text(library.displayName).font(.system(size: 14, weight: .semibold))
-            Text(library.collectionType == "movies" ? "电影" : library.collectionType == "tvshows" ? "剧集" : "混合")
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).padding(.top, -4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if items.isEmpty {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(height: 120)
+                } else if let errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(height: 60)
+                } else {
+                    Text("这个媒体库是空的")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(height: 60)
+                }
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 18) {
+                        ForEach(items) { item in
+                            ItemCard(item: item)
+                                .frame(width: theme.metrics.posterWidth)
+                                .environment(\.embyClient, client)
+                                .environment(\.embyServerID, serverID)
+                                .onAppear {
+                                    if item.id == items.last?.id {
+                                        Task { await loadMore() }
+                                    }
+                                }
+                        }
+
+                        if isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(width: 40, height: theme.metrics.posterWidth * 1.5)
+                        }
+                    }
+                    .mediaCardStyle(PosterTileStyle())
+                }
+                .contentMargins(.vertical, 4, for: .scrollContent)
+            }
         }
-        .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
+        .task(id: library.id) { await reload() }
+    }
+
+    private func reload() async {
+        items = []
+        total = nil
+        errorMessage = nil
+        await loadMore()
+    }
+
+    private func loadMore() async {
+        guard !isLoading, total.map({ items.count < $0 }) ?? true else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let page = try await client.items(in: library.id, sort: .dateAdded, descending: true,
+                                              start: items.count, limit: pageSize)
+            guard !Task.isCancelled else { return }
+            let known = Set(items.map(\.id))
+            items += page.items.filter { !known.contains($0.id) }
+            total = page.totalRecordCount ?? items.count
+            errorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

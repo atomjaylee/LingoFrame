@@ -14,8 +14,8 @@ struct LibraryGridView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var loadGeneration: UInt64 = 0
-    @AppStorage("library.sort") private var sort: EmbyClient.Sort = .name
-    @AppStorage("library.descending") private var descending = false
+    @AppStorage("library.sort") private var sort: EmbyClient.Sort = .dateAdded
+    @AppStorage("library.descending") private var descending = true
 
     private let pageSize = 60
 
