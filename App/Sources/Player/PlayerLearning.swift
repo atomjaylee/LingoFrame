@@ -18,35 +18,37 @@ struct SubtitleOverlay: View {
     var body: some View {
         let mode = session.subtitleMode
         let line = session.currentLine.flatMap { session.primaryCues.indices.contains($0) ? session.primaryCues[$0] : nil }
-        VStack(spacing: 8) {
-            if mode != .off, let line {
-                FlowLayout(spacing: 7, lineSpacing: 4) {
-                    ForEach(Array(Self.words(line.text).enumerated()), id: \.offset) { _, word in
-                        SubtitleWord(word: word, isSelected: lookup?.word == Self.bare(word)) {
-                            session.engine.pause()
-                            lookup = WordLookup(word: Self.bare(word), sentence: line.text)
+        if !session.usesNativePlaybackSubtitles {
+            VStack(spacing: 8) {
+                if mode != .off, let line {
+                    FlowLayout(spacing: 7, lineSpacing: 4) {
+                        ForEach(Array(Self.words(line.text).enumerated()), id: \.offset) { _, word in
+                            SubtitleWord(word: word, isSelected: lookup?.word == Self.bare(word)) {
+                                session.engine.pause()
+                                lookup = WordLookup(word: Self.bare(word), sentence: line.text)
+                            }
                         }
                     }
-                }
-                .font(.system(size: 28, weight: .semibold))
-                .multilineTextAlignment(.center)
-                .blur(radius: mode == .blurPrimary ? 9 : 0)
-            } else if mode != .off, let native = session.engine.currentSubtitleText {
-                Text(native)
                     .font(.system(size: 28, weight: .semibold))
                     .multilineTextAlignment(.center)
                     .blur(radius: mode == .blurPrimary ? 9 : 0)
+                } else if mode != .off, let native = session.engine.currentSubtitleText {
+                    Text(native)
+                        .font(.system(size: 28, weight: .semibold))
+                        .multilineTextAlignment(.center)
+                        .blur(radius: mode == .blurPrimary ? 9 : 0)
+                }
+                if mode == .bilingual, let zh = session.currentSecondary {
+                    Text(zh)
+                        .font(.system(size: 17, weight: .medium))
+                        .multilineTextAlignment(.center)
+                }
             }
-            if mode == .bilingual, let zh = session.currentSecondary {
-                Text(zh)
-                    .font(.system(size: 17, weight: .medium))
-                    .multilineTextAlignment(.center)
-            }
+            .shadow(color: .black.opacity(0.85), radius: 1.5, y: 1)
+            .shadow(color: .black.opacity(0.45), radius: 7)
+            .frame(maxWidth: .infinity)
+            .animation(nil, value: session.currentLine)
         }
-        .shadow(color: .black.opacity(0.85), radius: 1.5, y: 1)
-        .shadow(color: .black.opacity(0.45), radius: 7)
-        .frame(maxWidth: .infinity)
-        .animation(nil, value: session.currentLine)
     }
 
     static func words(_ text: String) -> [String] {
