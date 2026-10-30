@@ -131,7 +131,6 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     @ObservationIgnored private var needsVideoReloadOnAttach = false
     @ObservationIgnored private var fileIsLoaded = false
     @ObservationIgnored private var cropDetectionTask: Task<Void, Never>?
-    @ObservationIgnored private var surfaceResizeTask: Task<Void, Never>?
 
     public init(headless: Bool = false) {
         self.headless = headless
@@ -140,7 +139,6 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         surface.onWindowChanged = { [weak self] attached in
             self?.surfaceAttachmentChanged(attached)
         }
-        surface.onDrawableSizeChanged = { [weak self] in self?.surfaceSizeChanged() }
         guard let handle = resources.handle else {
             state = .failed("无法创建 libmpv 播放内核")
             return
@@ -296,11 +294,6 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         }
     }
 
-    public func refreshVideoSurface() {
-        setString("vid", "auto")
-        command("video-reload")
-    }
-
     /// 学习层字幕尚未就绪时由 mpv 直接显示 ASS/PGS；文本字幕下载完成后切回可点击的自绘字幕。
     public func setNativeSubtitlesVisible(_ visible: Bool) {
         nativeSubtitlesVisible = visible
@@ -419,21 +412,6 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     private func surfaceAttachmentChanged(_ attached: Bool) {
         guard attached else { return }
         recoverVideoAfterAttachmentIfNeeded()
-    }
-
-    private func surfaceSizeChanged() {
-        surfaceResizeTask?.cancel()
-        guard !headless, fileIsLoaded, surface.window != nil, loadedURL != nil else { return }
-        let generation = mediaGeneration
-        surfaceResizeTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(120))
-            guard let self, !Task.isCancelled, generation == self.mediaGeneration,
-                  self.fileIsLoaded, self.surface.window != nil, self.loadedURL != nil else { return }
-            // 当前 MoltenVK 后端没有缩放事件入口；缩放停下后重配视频输出，由 mpv 保留进度和暂停状态。
-            // 用尺寸标记输出实例，避免 mpv 把相同的 vo 配置当作无变化而跳过。
-            let size = self.surface.metalLayer.drawableSize
-            self.setString("vo", "@surface-\(Int(size.width))x\(Int(size.height)):gpu-next")
-        }
     }
 
     private func recoverVideoAfterAttachmentIfNeeded() {
@@ -767,50 +745,23 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
 
 public final class MPVSurfaceView: NSView {
     public let metalLayer = CAMetalLayer()
+    var renderSize: CGSize = .zero
     var onWindowChanged: (@MainActor (Bool) -> Void)?
-    var onDrawableSizeChanged: (@MainActor () -> Void)?
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer = metalLayer
         metalLayer.backgroundColor = NSColor.black.cgColor
-        updateDrawableSize()
+        metalLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    public override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        updateDrawableSize()
-    }
-
-    public override func layout() {
-        super.layout()
-        updateDrawableSize()
-    }
-
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        updateDrawableSize()
         onWindowChanged?(window != nil)
-    }
-
-    public override func viewDidChangeBackingProperties() {
-        super.viewDidChangeBackingProperties()
-        updateDrawableSize()
-    }
-
-    private func updateDrawableSize() {
-        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        metalLayer.contentsScale = scale
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
-        guard metalLayer.drawableSize != size else { return }
-        // 图层边框会自动跟随窗口，但 Metal 画布需要同步更新，否则放大后仍按旧尺寸绘制。
-        metalLayer.drawableSize = size
-        onDrawableSizeChanged?()
     }
 
     public override var mouseDownCanMoveWindow: Bool { true }

@@ -1,6 +1,5 @@
 import AppKit
 import QuartzCore
-import SwiftUI
 import Testing
 @testable import PlaybackKit
 
@@ -41,7 +40,8 @@ private final class RangeProtocol: URLProtocol, @unchecked Sendable {
 
 private let ffmpeg = "/usr/local/bin/ffmpeg"
 
-private func makeTestMKV(duration: Int = 6, sampleAspectRatio: String? = nil) throws -> URL {
+private func makeTestMKV(duration: Int = 6, sampleAspectRatio: String? = nil,
+                         videoCodec: String = "h264_videotoolbox") throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("elenglish-mpv-\(UUID().uuidString).mkv")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: ffmpeg)
@@ -51,8 +51,9 @@ private func makeTestMKV(duration: Int = 6, sampleAspectRatio: String? = nil) th
         "-t", "\(duration)",
     ]
     if let sampleAspectRatio { arguments += ["-vf", "setsar=\(sampleAspectRatio)"] }
-    arguments += ["-c:v", "h264_videotoolbox", "-b:v", "1M", "-g", "12",
-                  "-c:a", "aac", "-shortest", url.path]
+    arguments += ["-c:v", videoCodec, "-b:v", "1M", "-g", "12"]
+    if videoCodec == "hevc_videotoolbox" { arguments += ["-tag:v", "hvc1"] }
+    arguments += ["-c:a", "aac", "-shortest", url.path]
     process.arguments = arguments
     try process.run()
     process.waitUntilExit()
@@ -134,43 +135,50 @@ struct MPVPlayerEngineTests {
         #expect(!engine.nativeSubtitlesVisible)
     }
 
-    @Test func surfaceFollowsWindowSizeAndBackingScale() {
+    @Test func surfaceHostScalesExistingFrameWithoutResizingRenderer() {
         let engine = MPVPlayerEngine()
         let surface = engine.surface
-        var sizeChanges = 0
-        surface.onDrawableSizeChanged = { sizeChanges += 1 }
-        let host = NSHostingView(rootView: PlayerSurface(engine: engine).frame(maxWidth: .infinity, maxHeight: .infinity))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 360), styleMask: [.borderless],
-                              backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        defer { window.close() }
-        window.contentView = host
+        let host = MPVSurfaceHostView(surface: surface)
+        host.frame = NSRect(x: 0, y: 0, width: 720, height: 450)
+        host.layoutSubtreeIfNeeded()
+        host.presentationSize = CGSize(width: 720, height: 360)
+        surface.metalLayer.drawableSize = CGSize(width: 1440, height: 900)
 
-        // 覆盖初始尺寸、放大、全屏尺寸、缩小和恢复，画布始终使用当前窗口的像素尺寸。
-        for size in [CGSize(width: 720, height: 360), CGSize(width: 1440, height: 720),
-                     CGSize(width: 2648, height: 1324), CGSize(width: 900, height: 450),
-                     CGSize(width: 720, height: 360)] {
-            window.setContentSize(size)
+        for (size, scale) in [(CGSize(width: 1440, height: 720), 2.0),
+                              (CGSize(width: 900, height: 450), 1.25),
+                              (CGSize(width: 1920, height: 1080), 8.0 / 3.0),
+                              (CGSize(width: 720, height: 360), 1.0)] {
+            host.frame.size = size
             host.layoutSubtreeIfNeeded()
-            #expect(surface.bounds.size == size)
-            #expect(surface.metalLayer.bounds.size == size)
-            #expect(surface.metalLayer.contentsScale == window.backingScaleFactor)
-            #expect(surface.metalLayer.drawableSize == CGSize(
-                width: size.width * window.backingScaleFactor,
-                height: size.height * window.backingScaleFactor))
-            let changes = sizeChanges
-            surface.layout()
-            #expect(sizeChanges == changes)
+            #expect(host.renderSize == CGSize(width: 720, height: 450))
+            #expect(surface.bounds.size == CGSize(width: 720, height: 450))
+            #expect(surface.metalLayer.drawableSize == CGSize(width: 1440, height: 900))
+            #expect(abs(surface.layer!.affineTransform().a - scale) < 0.001)
+            #expect(abs(surface.layer!.affineTransform().d - scale) < 0.001)
+            #expect(abs(surface.layer!.position.x - (size.width - 720 * scale) / 2) < 0.001)
+            #expect(abs(surface.layer!.position.y - (size.height - 450 * scale) / 2) < 0.001)
         }
-        #expect(sizeChanges >= 5)
+
+        surface.removeFromSuperview()
+        let nextHost = MPVSurfaceHostView(surface: surface)
+        nextHost.frame = NSRect(x: 0, y: 0, width: 1000, height: 500)
+        nextHost.presentationSize = CGSize(width: 720, height: 360)
+        nextHost.layoutSubtreeIfNeeded()
+        #expect(nextHost.renderSize == CGSize(width: 720, height: 450))
+        #expect(surface.bounds.size == CGSize(width: 720, height: 450))
+        #expect(surface.metalLayer.drawableSize == CGSize(width: 1440, height: 900))
     }
 
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
-    func resizingPausedVideoUpdatesRenderedSizeWithoutChangingPosition() async throws {
+    func resizingPausedVideoKeepsRendererAndPosition() async throws {
         let source = try makeTestMKV()
-        defer { try? FileManager.default.removeItem(at: source) }
+        let replacement = try makeTestMKV(duration: 3, videoCodec: "hevc_videotoolbox")
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: replacement)
+        }
         let engine = MPVPlayerEngine()
-        let host = NSHostingView(rootView: PlayerSurface(engine: engine).frame(maxWidth: .infinity, maxHeight: .infinity))
+        let host = MPVSurfaceHostView(surface: engine.surface)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 360),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -183,17 +191,29 @@ struct MPVPlayerEngineTests {
         await engine.seek(to: 1.5, exact: true)
         let position = engine.currentTime
 
-        for size in [CGSize(width: 1280, height: 720), CGSize(width: 800, height: 600),
-                     CGSize(width: 640, height: 360)] {
+        let renderedSize = engine.renderedPixelSize
+        for size in [CGSize(width: 1280, height: 720), CGSize(width: 800, height: 450),
+                     CGSize(width: 1920, height: 1080), CGSize(width: 640, height: 360)] {
             window.setContentSize(size)
             host.layoutSubtreeIfNeeded()
-            let pixels = CGSize(width: size.width * window.backingScaleFactor,
-                                height: size.height * window.backingScaleFactor)
-            try await waitUntil(timeout: 30) { engine.renderedPixelSize == pixels && engine.state == .paused }
+            try await Task.sleep(for: .milliseconds(200))
+            #expect(engine.renderedPixelSize == renderedSize)
+            #expect(engine.state == .paused)
             #expect(abs(engine.currentTime - position) < 0.2)
         }
+        let nextHost = MPVSurfaceHostView(surface: engine.surface)
+        nextHost.frame = NSRect(origin: .zero, size: CGSize(width: 960, height: 540))
+        window.contentView = nextHost
+        nextHost.layoutSubtreeIfNeeded()
+        #expect(nextHost.renderSize == host.renderSize)
+        #expect(engine.renderedPixelSize == renderedSize)
+        #expect(engine.state == .paused)
+
         engine.stop()
         try await waitUntil { engine.renderedPixelSize == .zero }
+        engine.load(url: replacement, autoplay: false)
+        try await waitUntil { engine.state == .paused && engine.renderedPixelSize == renderedSize }
+        #expect(engine.videoDescription?.contains("HEVC") == true)
     }
 
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))

@@ -195,10 +195,6 @@ private struct PlayerScreen: View {
         frame.size = CGSize(width: width, height: height)
         frame.origin.y = max(frame.origin.y, visible.minY)
         window.setFrame(frame, display: true)
-        Task { @MainActor in
-            await Task.yield()
-            session.engine.refreshVideoSurface()
-        }
     }
 
     private var stage: some View {
