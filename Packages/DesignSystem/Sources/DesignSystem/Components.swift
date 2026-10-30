@@ -5,6 +5,19 @@ import SwiftUI
 
 // MARK: - 按钮
 
+private struct ClickablePointer: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func body(content: Content) -> some View {
+        content.pointerStyle(isEnabled ? .link : .default)
+    }
+}
+
+extension View {
+    /// 可操作时显示手形，禁用时恢复默认指针；由系统处理移入和移出。
+    public func clickablePointer() -> some View { modifier(ClickablePointer()) }
+}
+
 /// 主按钮 rx-btn--primary：白色胶囊，一个页面只放一个。
 public struct RexPrimaryButtonStyle: ButtonStyle {
     @Environment(\.theme) private var theme
@@ -22,6 +35,7 @@ public struct RexPrimaryButtonStyle: ButtonStyle {
             .background(theme.colors.buttonPrimary.color.opacity(isEnabled ? 1 : 0.5), in: Capsule())
             .opacity(configuration.isPressed ? 0.85 : 1)
             .contentShape(Capsule())
+            .clickablePointer()
     }
 }
 
@@ -39,6 +53,7 @@ public struct RexNeutralButtonStyle: ButtonStyle {
             .frame(height: 48)
             .background(theme.colors.buttonNeutral.color, in: Capsule())
             .opacity(configuration.isPressed ? 0.85 : 1)
+            .clickablePointer()
     }
 }
 
@@ -89,6 +104,7 @@ public struct RexIconButtonStyle: ButtonStyle {
             .overlay(circle.strokeBorder(glass ? theme.colors.glassStroke.color : .clear, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(circle)
+            .clickablePointer()
     }
 }
 
@@ -105,6 +121,7 @@ public struct RexTextButtonStyle: ButtonStyle {
             .padding(theme.metrics.space(2))
             .opacity(configuration.isPressed ? 0.6 : 1)
             .contentShape(Rectangle())
+            .clickablePointer()
     }
 }
 
@@ -129,6 +146,7 @@ public struct RexChipStyle: ButtonStyle {
             .overlay(Capsule().strokeBorder(isSelected ? theme.colors.glassStroke.color : .clear, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(Capsule())
+            .clickablePointer()
     }
 }
 

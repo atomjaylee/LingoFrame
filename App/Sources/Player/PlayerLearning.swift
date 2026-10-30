@@ -106,6 +106,7 @@ private struct SubtitleWord: View {
             .contentShape(Rectangle())
             .onHover { isHovered = $0 }
             .onTapGesture(perform: action)
+            .clickablePointer()
     }
 }
 
@@ -288,7 +289,7 @@ struct LearningPanel: View {
                     .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plain).clickablePointer()
             .foregroundStyle(.secondary)
             .accessibilityLabel("关闭面板")
         }
@@ -301,7 +302,7 @@ struct LearningPanel: View {
         HStack(spacing: 12) {
             if tab == .episodes {
                 Button { tab = .transcript } label: { Label("返回字幕", systemImage: "chevron.left") }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plain).clickablePointer()
                 Spacer()
             } else {
                 Picker("画面字幕", selection: $session.subtitleMode) {
@@ -346,7 +347,7 @@ struct LearningPanel: View {
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+            .menuStyle(.button).buttonStyle(.plain).clickablePointer().menuIndicator(.hidden)
             .accessibilityLabel("字幕设置与分集")
         }
         .font(.system(size: 12, weight: .medium))
@@ -389,7 +390,7 @@ private struct CurrentSentence: View {
                     .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.white.opacity(0.1)))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plain).clickablePointer()
                 .keyboardShortcut("t", modifiers: [])
                 .disabled(translation == nil)
                 .help(translation == nil ? "请在字幕设置中选择中文字幕轨" : "只显示或隐藏当前句的中文")
@@ -476,7 +477,7 @@ private struct StudyControls: View {
                 } label: {
                     Text(String(format: "%g×", session.engine.rate)).monospacedDigit().frame(minWidth: 66)
                 }
-                .menuStyle(.borderlessButton).fixedSize()
+                .menuStyle(.borderlessButton).fixedSize().clickablePointer()
             }
             row("句末暂停") {
                 Toggle("句末暂停", isOn: $session.pauseAfterSentence)
@@ -508,7 +509,7 @@ private struct StudyControls: View {
                 .strokeBorder(.white.opacity(0.1), lineWidth: 1))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).clickablePointer()
         .help(title == "重播本句" ? "重播本句（R）" : title)
     }
 
@@ -594,7 +595,7 @@ private struct TranscriptList: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).clickablePointer()
     }
 }
 
@@ -658,7 +659,7 @@ private struct EpisodeList: View {
                             .background(isCurrent ? Color.white.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.plain).clickablePointer()
                         .id(ep.id)
                     }
                 }

@@ -469,7 +469,7 @@ private struct CloseButton: View {
             .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).clickablePointer()
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .keyboardShortcut("w", modifiers: .command)
@@ -485,6 +485,7 @@ private struct ControlBar: View {
     @Binding var isScrubbing: Bool
     let window: NSWindow?
     @Environment(\.openWindow) private var openWindow
+    @State private var speedHovered = false
 
     private var engine: NativePlayerEngine { session.engine }
 
@@ -570,9 +571,11 @@ private struct ControlBar: View {
             }
             .font(.system(size: 12, weight: .medium))
             .frame(width: compact ? 54 : 64, height: 34)
+            .background(.white.opacity(speedHovered ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .menuStyle(.button).buttonStyle(.plain).clickablePointer().menuIndicator(.hidden).fixedSize()
+        .onHover { speedHovered = $0 }
         .help("播放速度（[ 和 ] 调速度）")
         .accessibilityLabel("播放速度")
     }
@@ -602,7 +605,7 @@ private struct ControlBar: View {
         Menu { audioOptions } label: {
             HoverControlIcon(systemName: "waveform", size: 16)
         }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .menuStyle(.button).buttonStyle(.plain).clickablePointer().menuIndicator(.hidden).fixedSize()
         .help("当前音轨：" + (engine.audioOptions.first { $0.id == engine.selectedAudioID }?.title ?? "未选择"))
         .accessibilityLabel("选择音轨")
     }
@@ -633,7 +636,7 @@ private struct ControlBar: View {
         Menu { subtitleOptions } label: {
             HoverControlIcon(systemName: "captions.bubble.fill", size: 16)
         }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .menuStyle(.button).buttonStyle(.plain).clickablePointer().menuIndicator(.hidden).fixedSize()
         .help("当前字幕：" + (engine.subtitleOptions.first { $0.id == currentSubtitleID }?.title ?? "关闭"))
         .accessibilityLabel("选择字幕")
     }
@@ -648,6 +651,7 @@ private struct PlayerControlButton: View {
     var foreground: Color = .white
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
@@ -660,8 +664,9 @@ private struct PlayerControlButton: View {
                 .scaleEffect(hovering ? 1.06 : 1)
                 .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        .buttonStyle(.plain).clickablePointer()
+        .onHover { hovering = $0 && isEnabled }
+        .onChange(of: isEnabled) { _, enabled in if !enabled { hovering = false } }
         .animation(.easeOut(duration: 0.1), value: hovering)
         .help(label)
         .accessibilityLabel(label)
