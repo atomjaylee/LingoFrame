@@ -355,7 +355,8 @@ private struct StatusOverlay: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        let state = session.engine.state
+        let engine = session.engine
+        let state = engine.state
         if let message = session.errorMessage ?? state.failureMessage {
             card {
                 Image(systemName: "exclamationmark.triangle").font(.system(size: 32))
@@ -372,8 +373,8 @@ private struct StatusOverlay: View {
                     .buttonStyle(RexTextButtonStyle())
                 }
             }
-        } else if state == .loading || state == .idle {
-            ProgressView().controlSize(.large).tint(.white)
+        } else if state == .idle || engine.isWaitingForMedia {
+            DelayedLoadingOverlay(label: engine.isSeeking ? "正在跳转…" : engine.isBuffering ? "正在缓冲…" : "正在加载…")
         } else if state == .ended {
             card {
                 if let next = session.nextItem {
@@ -401,6 +402,32 @@ private struct StatusOverlay: View {
             .background(theme.colors.popoverFill.color, in: RoundedRectangle(cornerRadius: theme.metrics.radiusXl, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: theme.metrics.radiusXl, style: .continuous)
                 .strokeBorder(theme.colors.glassStroke.color, lineWidth: 1))
+    }
+}
+
+/// 缓存内的瞬时跳转不闪圈；真正等待网络或解码时才显示，并在恢复后立即移除。
+private struct DelayedLoadingOverlay: View {
+    let label: String
+    @State private var visible = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small).tint(.white)
+            Text(label).font(.system(size: 13, weight: .semibold))
+        }
+        .padding(.horizontal, 15)
+        .frame(height: 42)
+        .background(.black.opacity(0.24), in: Capsule())
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1))
+        .shadow(color: .black.opacity(0.32), radius: 10, y: 4)
+        .opacity(visible ? 1 : 0)
+        .animation(.easeOut(duration: 0.14), value: visible)
+        .task {
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            visible = true
+        }
     }
 }
 

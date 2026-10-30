@@ -86,6 +86,9 @@ struct NativePlayerEngineTests {
 
         await engine.seek(to: 1.5, exact: true)
         #expect(abs(engine.currentTime - 1.5) < 0.5)
+        #expect(!engine.isSeeking)
+        #expect(!engine.isBuffering)
+        #expect(!engine.isWaitingForMedia)
 
         try await engine.load(url: hevc, autoplay: false)
         try await waitUntil { engine.state == .paused && engine.videoDescription?.contains("HEVC") == true }

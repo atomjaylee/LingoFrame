@@ -54,6 +54,8 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     public private(set) var currentTime: Double = 0
     public private(set) var duration: Double = 0
     public private(set) var bufferedRanges: [BufferedRange] = []
+    public private(set) var isSeeking = false
+    public private(set) var isBuffering = false
     public private(set) var presentationSize: CGSize = .zero
     public private(set) var audioOptions: [TrackOption] = []
     public private(set) var selectedAudioID: Int?
@@ -65,6 +67,9 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     public private(set) var currentSubtitleImages: [NativeSubtitleImage] = []
     public private(set) var startupMilliseconds: Double?
     public private(set) var startupStage = "未开始"
+
+    /// 初次加载、跳到未缓存位置或播放中断粮时，界面都应明确告诉用户正在等待数据。
+    public var isWaitingForMedia: Bool { state == .loading || isSeeking || isBuffering }
 
     public var rate: Double = 1 {
         didSet { backend.setRate(Float(rate)) }
@@ -254,6 +259,8 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         }.store(in: &cancellables)
 
         backend.$duration.sink { [weak self] in self?.duration = $0 }.store(in: &cancellables)
+        backend.$isSeeking.removeDuplicates().sink { [weak self] in self?.isSeeking = $0 }.store(in: &cancellables)
+        backend.$isBuffering.removeDuplicates().sink { [weak self] in self?.isBuffering = $0 }.store(in: &cancellables)
         backend.$residentRanges.sink { [weak self] ranges in
             self?.bufferedRanges = ranges.map { BufferedRange(lowerBound: $0.lowerBound, upperBound: $0.upperBound) }
         }.store(in: &cancellables)
