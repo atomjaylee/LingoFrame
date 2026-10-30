@@ -16,7 +16,7 @@ final class PlayerWindowController: NSObject, NSWindowDelegate {
         self.model = model
         if window == nil {
             let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-            let size = NSSize(width: min(1280, screen.width), height: min(720, screen.height))
+            let size = NSSize(width: min(1440, screen.width), height: min(900, screen.height))
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
@@ -164,13 +164,7 @@ private struct PlayerScreen: View {
                 return PlayerCommands.perform(command, session: session, window: window)
             }
         }
-        .onDisappear {
-            keyMonitor.stop()
-            hideTask?.cancel()
-        }
-        .onChange(of: isScrubbing) { _, dragging in
-            if !dragging { poke() }
-        }
+        .onDisappear { keyMonitor.stop() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
             if let window, note.object as? NSWindow === window { model.activeSession = session }
         }
@@ -231,6 +225,12 @@ private struct PlayerScreen: View {
                     .transition(.opacity)
                     .allowsHitTesting(false)
             }
+            LinearGradient(colors: [.clear, .black.opacity(0.18), .black.opacity(0.72)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 220)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .opacity(controlsVisible ? 1 : 0)
+                .allowsHitTesting(false)
             SubtitleOverlay(session: session, lookup: $lookup)
                 .padding(.horizontal, 64)
                 .frame(maxHeight: .infinity, alignment: .bottom)
@@ -245,22 +245,12 @@ private struct PlayerScreen: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
             VStack(spacing: 0) {
-                Text(session.windowTitle)
-                    .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(1)
-                    .padding(.horizontal, 110)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 28)
-                    .shadow(color: .black.opacity(0.6), radius: 3, y: 1)
-                    .allowsHitTesting(false)
-                    .opacity(controlsVisible ? 1 : 0)
                 HStack {
                     CloseButton(window: window)
-                        .onHover { overControls = $0; if $0 { poke() } }
+                        .onHover { overControls = $0 }
                     Spacer()
                 }
-                .padding(.horizontal, 8)
-                .padding(.top, 8)
+                .padding(10)
                 .opacity(controlsVisible ? 1 : 0)
                 .offset(y: controlsVisible ? 0 : -6)
                 Spacer(minLength: 0)
@@ -269,7 +259,7 @@ private struct PlayerScreen: View {
                         overControls = $0
                         if $0 { hideTask?.cancel() } else { scheduleHide(after: 0.7) }
                     }
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 10)
                     .opacity(controlsVisible ? 1 : 0)
                     .offset(y: controlsVisible ? 0 : 10)
             }
@@ -380,7 +370,7 @@ extension PlaybackState {
 
 // MARK: - 关闭按钮
 
-/// 左上角的「✕ 关闭」，跟片名和控制条一起淡出。
+/// 左上角的「✕ 关闭」，和 Infuse 一样只有这一个；片名在窗口标题栏里。
 private struct CloseButton: View {
     let window: NSWindow?
 
@@ -405,7 +395,7 @@ private struct CloseButton: View {
 
 // MARK: - 控制面板
 
-/// Infuse 式悬浮控制条：操作在上、进度在下；字幕和音轨收进设置，画面保留原有亮度。
+/// Infuse 式底部控制层：进度在上、操作在下，浮在渐变遮罩上，不再使用厚重的悬浮卡片。
 private struct ControlBar: View {
     let session: PlaybackSession
     @Binding var isScrubbing: Bool
@@ -415,7 +405,12 @@ private struct ControlBar: View {
     private var engine: MPVPlayerEngine { session.engine }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
+            HStack(spacing: 14) {
+                TimeText(engine: engine, remaining: false)
+                Scrubber(engine: engine, isScrubbing: $isScrubbing)
+                TimeText(engine: engine, remaining: true)
+            }
             ZStack {
                 HStack(spacing: 6) {
                     PlayerControlButton(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill",
@@ -424,7 +419,7 @@ private struct ControlBar: View {
                     }
                     ThinSlider(value: Binding(get: { engine.isMuted ? 0 : Double(engine.volume) },
                                               set: { engine.volume = Float($0); engine.isMuted = false }))
-                        .frame(width: 110)
+                        .frame(width: 120)
                         .accessibilityLabel("音量")
                     Spacer()
                 }
@@ -434,47 +429,41 @@ private struct ControlBar: View {
                     }
                     .disabled(session.previousItem == nil)
                     .opacity(session.previousItem == nil ? 0.35 : 1)
-                    icon("gobackward.10", size: 20, label: "后退 10 秒") { session.seek(by: -10) }
-                    PlayerControlButton(systemName: engine.state == .playing ? "pause.fill" : "play.fill", size: 24,
+                    icon("gobackward.10", size: 20, label: "后退 10 秒（⇧←）") { session.seek(by: -10) }
+                    PlayerControlButton(systemName: engine.state == .playing ? "pause.fill" : "play.fill", size: 22,
                                         label: engine.state == .playing ? "暂停（空格）" : "播放（空格）",
                                         prominent: true) { session.togglePlay() }
-                    icon("goforward.10", size: 20, label: "前进 10 秒") { session.seek(by: 10) }
+                    icon("goforward.10", size: 20, label: "前进 10 秒（⇧→）") { session.seek(by: 10) }
                     icon("forward.end.fill", size: 17, label: "下一集") {
                         if let next = session.nextItem { Task { await session.play(itemID: next.id, resume: true) } }
                     }
                     .disabled(session.nextItem == nil)
                     .opacity(session.nextItem == nil ? 0.35 : 1)
                 }
-                HStack(spacing: 18) {
+                HStack(spacing: 10) {
                     Spacer()
+                    if !engine.subtitleOptions.isEmpty { subtitleTrackMenu }
+                    if engine.audioOptions.count > 1 { audioTrackMenu }
                     settingsMenu
                     icon(window?.styleMask.contains(.fullScreen) == true ? "arrow.down.right.and.arrow.up.left"
                          : "arrow.up.left.and.arrow.down.right", size: 16, label: "全屏（双击画面）") { window?.toggleFullScreen(nil) }
-                    PlayerControlButton(systemName: "list.bullet.rectangle", size: 17, label: "打开字幕窗口") {
+                    PlayerControlButton(systemName: "list.bullet", size: 17, label: "打开字幕窗口") {
                         openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                     }
                 }
             }
-            HStack(spacing: 14) {
-                TimeText(engine: engine, remaining: false)
-                Scrubber(engine: engine, isScrubbing: $isScrubbing)
-                TimeText(engine: engine, remaining: true)
-            }
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 18)
-        .padding(.top, 12)
-        .padding(.bottom, 11)
-        .frame(width: 620)
-        .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, 30)
+        .padding(.bottom, 4)
+        .frame(maxWidth: 980)
     }
 
     private func icon(_ name: String, size: Double, label: String, action: @escaping () -> Void) -> some View {
         PlayerControlButton(systemName: name, size: size, label: label, action: action)
     }
 
-    /// 设置：播放速度、音轨和字幕，收起学习窗口也能操作。
+    /// 设置：播放速度、音轨。
     private var settingsMenu: some View {
         Menu {
             Menu("速度 \(String(format: "%g×", engine.rate))") {
@@ -487,8 +476,6 @@ private struct ControlBar: View {
                     }
                 }
             }
-            if engine.audioOptions.count > 1 { audioTrackMenu }
-            if !engine.subtitleOptions.isEmpty { subtitleTrackMenu }
         } label: {
             HoverControlIcon(systemName: "gearshape.fill", size: 17)
         }
@@ -496,12 +483,11 @@ private struct ControlBar: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("播放速度、音轨和字幕（[ 和 ] 调速度）")
-        .accessibilityLabel("播放设置")
+        .help("播放速度（[ 和 ] 调速度）")
     }
 
     private var audioTrackMenu: some View {
-        Menu("音轨") {
+        Menu {
             ForEach(engine.audioOptions) { option in
                 Button {
                     engine.selectAudio(option.id)
@@ -510,11 +496,16 @@ private struct ControlBar: View {
                     else { Text(option.title) }
                 }
             }
+        } label: {
+            HoverControlIcon(systemName: "speaker.wave.2.fill", size: 16)
         }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help("选择音轨")
+        .accessibilityLabel("选择音轨")
     }
 
     private var subtitleTrackMenu: some View {
-        Menu("字幕") {
+        Menu {
             Button {
                 session.selectPlaybackSubtitle(nil)
             } label: {
@@ -530,7 +521,12 @@ private struct ControlBar: View {
                     else { Text(option.title) }
                 }
             }
+        } label: {
+            HoverControlIcon(systemName: "captions.bubble.fill", size: 16)
         }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help("选择字幕")
+        .accessibilityLabel("选择字幕")
     }
 
 }
@@ -547,10 +543,10 @@ private struct PlayerControlButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: size, weight: .medium))
+                .font(.system(size: size, weight: .semibold))
                 .foregroundStyle(foreground)
-                .frame(width: prominent ? 34 : 28, height: prominent ? 34 : 28)
-                .background(.white.opacity(hovering ? 0.2 : 0), in: Circle())
+                .frame(width: prominent ? 42 : 34, height: prominent ? 42 : 34)
+                .background(.white.opacity(hovering ? 0.2 : prominent ? 0.1 : 0), in: Circle())
                 .contentShape(Circle())
                 .scaleEffect(hovering ? 1.06 : 1)
                 .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
@@ -571,7 +567,7 @@ private struct HoverControlIcon: View {
     var body: some View {
         Image(systemName: systemName)
             .font(.system(size: size, weight: .semibold))
-            .frame(width: 28, height: 28)
+            .frame(width: 34, height: 34)
             .background(.white.opacity(hovering ? 0.2 : 0), in: Circle())
             .contentShape(Circle())
             .scaleEffect(hovering ? 1.06 : 1)
@@ -626,6 +622,7 @@ private struct Scrubber: View {
     let engine: MPVPlayerEngine
     @Binding var isScrubbing: Bool
     @State private var dragValue: Double = 0
+    @Environment(\.theme) private var theme
 
     var body: some View {
         GeometryReader { geo in
@@ -641,7 +638,7 @@ private struct Scrubber: View {
                         .offset(x: geo.size.width * start)
                 }
                 if played > 0 {
-                    Capsule().fill(.white)
+                    Capsule().fill(theme.colors.accentAmber.color)
                         .frame(width: max(4, geo.size.width * played), height: 4)
                 }
                 Circle().fill(.white).frame(width: 16, height: 16).shadow(color: .black.opacity(0.4), radius: 1.5, y: 1)
