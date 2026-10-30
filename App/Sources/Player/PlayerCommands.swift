@@ -13,6 +13,7 @@ enum PlayerCommands {
     static let revealControls: CommandID = "playback.reveal-controls"
     static let toggleFullScreen: CommandID = "window.toggle-fullscreen"
     static let exitFullScreen: CommandID = "window.exit-fullscreen"
+    static let closeWindow: CommandID = "window.close"
 
     static let extraBindings = Bindings(
         gestures: [
@@ -27,6 +28,7 @@ enum PlayerCommands {
             KeyBinding(KeyChord("left", .shift), seekBackward),
             KeyBinding(KeyChord("return"), toggleFullScreen),
             KeyBinding(KeyChord("escape"), exitFullScreen),
+            KeyBinding(KeyChord("w", .command), closeWindow),
         ])
 
     /// 执行命令；返回 false 表示这个命令播放器不处理（按键交还给系统）。
@@ -46,6 +48,9 @@ enum PlayerCommands {
         case volumeDown: session.changeVolume(by: -0.1)
         case toggleMute: session.toggleMute()
         case revealControls: break
+        case closeWindow:
+            guard let window else { return false }
+            window.performClose(nil)
         case toggleFullScreen:
             guard let window else { return false }
             window.toggleFullScreen(nil)

@@ -38,6 +38,9 @@ private struct TranscriptFloatingPanel: View {
                 NoSessionView()
             }
         }
+        .onChange(of: session == nil) { _, hasEnded in
+            if hasEnded { dismissWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript) }
+        }
         .onDisappear { keyMonitor.stop() }
     }
 
@@ -61,7 +64,8 @@ private struct TranscriptFloatingPanel: View {
         positioned = true
         keyMonitor.start(window: panel) { chord in
             guard let command = model.bindings.command(for: chord) else { return false }
-            return PlayerCommands.perform(command, session: session, window: player)
+            return PlayerCommands.perform(command, session: session,
+                                          window: command == PlayerCommands.closeWindow ? panel : player)
         }
         panel.setContentSize(NSSize(width: 480, height: min(720, visible.height)))
         let gap: Double = 8
