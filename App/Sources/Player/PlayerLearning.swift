@@ -264,21 +264,24 @@ struct LearningPanel: View {
         .environment(\.colorScheme, .dark)
         .background(Color(white: 0.075).opacity(0.97))
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .strokeBorder(.white.opacity(0.1), lineWidth: 1))
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("字幕与学习").font(.system(size: 16, weight: .semibold))
-            if let currentLine {
-                Text("\(currentLine + 1) / \(session.primaryCues.count)")
-                    .font(.system(size: 12, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Text("字幕与学习").font(.system(size: 16, weight: .semibold))
+                if let currentLine {
+                    Text("\(currentLine + 1) / \(session.primaryCues.count)")
+                        .font(.system(size: 12, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
             }
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, minHeight: 26)
+            .contentShape(Rectangle())
+            .gesture(WindowDragGesture())
+            .allowsWindowActivationEvents()
             Button(action: hide) {
                 Image(systemName: "xmark")
                     .font(.system(size: 13, weight: .medium))
@@ -559,6 +562,9 @@ private struct TranscriptList: View {
                     .onChange(of: currentLine, initial: true) { _, line in
                         guard let line else { return }
                         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(line, anchor: .center) }
+                    }
+                    .onChange(of: geometry.size.height) { _, _ in
+                        if let currentLine { proxy.scrollTo(currentLine, anchor: .center) }
                     }
                 }
             }

@@ -44,13 +44,12 @@ private struct TranscriptFloatingPanel: View {
     private func configure(_ panel: NSWindow?, session: PlaybackSession) {
         guard let panel else { return }
         panel.titleVisibility = .hidden
-        // 保留有标题窗口的焦点能力，用全尺寸内容隐藏原生标题栏。
-        panel.styleMask = [.titled, .resizable, .fullSizeContentView]
+        // 沿用 SwiftUI 隐藏标题栏的窗口样式，保留原生焦点和缩放能力。
         panel.titlebarAppearsTransparent = true
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             panel.standardWindowButton(button)?.isHidden = true
         }
-        panel.isOpaque = false
+        panel.isOpaque = true
         panel.backgroundColor = NSColor(white: 0.075, alpha: 1)
         panel.hasShadow = true
         panel.isMovableByWindowBackground = true

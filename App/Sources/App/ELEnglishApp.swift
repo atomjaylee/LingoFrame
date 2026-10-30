@@ -20,7 +20,10 @@ struct ELEnglishApp: App {
             FloatingPanelView(panelID: panelID)
                 .environment(model.activeSession)
                 .appEnvironment(model)
+                .toolbar(.hidden, for: .windowToolbar)
+                .ignoresSafeArea(.container, edges: panelID == PanelIDs.transcript ? .top : [])
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 360, height: 520)
         .restorationBehavior(.disabled)
 
