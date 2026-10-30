@@ -64,7 +64,7 @@ final class PlaybackSession {
     private(set) var usesNativePlaybackSubtitles = false
     /// 没有可用字幕时的说明，比如「这个片源只有图形字幕」。
     private(set) var subtitleNote: String?
-    var subtitleMode: SubtitleMode = .bilingual {
+    var subtitleMode: SubtitleMode = .primaryOnly {
         didSet { updateNativeSubtitleVisibility() }
     }
     /// 当前句在主字幕里的序号，每 0.1 秒按播放位置更新，只有换句时才变。
@@ -363,16 +363,11 @@ final class PlaybackSession {
         engine.setNativeSubtitlesVisible(true)
         let options = Self.textSubtitleOptions(from: source)
         subtitleOptions = options
-        func pick(_ english: Bool) -> SubtitleOption? {
-            let pool = options.filter { english ? $0.isEnglish : $0.isChinese }
-            if english { return pool.first { !$0.title.lowercased().contains("sdh") } ?? pool.first }
-            return pool.first { $0.title.contains("简") || $0.title.lowercased().contains("simplified")
-                || $0.title.lowercased().contains("chs") } ?? pool.first
-        }
-        let primary = pick(true) ?? options.first
-        let secondary = primary?.isEnglish == true ? pick(false) : nil
+        let english = options.filter(\.isEnglish)
+        let primary = english.first { !$0.title.lowercased().contains("sdh") } ?? english.first ?? options.first
         primarySubtitle = primary
-        secondarySubtitle = secondary
+        secondarySubtitle = nil
+        subtitleMode = .primaryOnly
         usesNativePlaybackSubtitles = primary == nil
         if primary == nil {
             if source.subtitleStreams.isEmpty {
@@ -386,7 +381,7 @@ final class PlaybackSession {
         } else {
             disableBitmapSubtitleRecognition()
             subtitleNote = "正在读取字幕…"
-            selectSubtitles(primary: primary, secondary: secondary, itemID: itemID, sourceID: source.id)
+            selectSubtitles(primary: primary, secondary: nil, itemID: itemID, sourceID: source.id)
         }
     }
 
@@ -398,6 +393,8 @@ final class PlaybackSession {
 
     func selectSecondarySubtitle(_ option: SubtitleOption?) {
         guard let item, let stream else { return }
+        if option != nil { subtitleMode = .bilingual }
+        else if subtitleMode == .bilingual { subtitleMode = .primaryOnly }
         selectSubtitles(primary: primarySubtitle, secondary: option, itemID: item.id, sourceID: stream.mediaSource.id)
     }
 
@@ -520,10 +517,7 @@ final class PlaybackSession {
     nonisolated static func prefetchSubtitles(client: EmbyClient, itemID: String, source: MediaSourceInfo) async {
         let options = textSubtitleOptions(from: source)
         let english = options.first { $0.isEnglish }
-        let chinese = options.first { $0.isChinese }
-        async let primary = fetchCues(client, itemID, source.id, english ?? options.first)
-        async let secondary = fetchCues(client, itemID, source.id, chinese)
-        _ = await (primary, secondary)
+        _ = await fetchCues(client, itemID, source.id, english ?? options.first)
     }
 
     private nonisolated static func textSubtitleOptions(from source: MediaSourceInfo) -> [SubtitleOption] {
