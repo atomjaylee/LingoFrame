@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import SwiftUI
 import Testing
 @testable import PlaybackKit
 
@@ -131,6 +132,68 @@ struct MPVPlayerEngineTests {
         #expect(engine.nativeSubtitlesVisible)
         engine.setNativeSubtitlesVisible(false)
         #expect(!engine.nativeSubtitlesVisible)
+    }
+
+    @Test func surfaceFollowsWindowSizeAndBackingScale() {
+        let engine = MPVPlayerEngine()
+        let surface = engine.surface
+        var sizeChanges = 0
+        surface.onDrawableSizeChanged = { sizeChanges += 1 }
+        let host = NSHostingView(rootView: PlayerSurface(engine: engine).frame(maxWidth: .infinity, maxHeight: .infinity))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 360), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = host
+
+        // 覆盖初始尺寸、放大、全屏尺寸、缩小和恢复，画布始终使用当前窗口的像素尺寸。
+        for size in [CGSize(width: 720, height: 360), CGSize(width: 1440, height: 720),
+                     CGSize(width: 2648, height: 1324), CGSize(width: 900, height: 450),
+                     CGSize(width: 720, height: 360)] {
+            window.setContentSize(size)
+            host.layoutSubtreeIfNeeded()
+            #expect(surface.bounds.size == size)
+            #expect(surface.metalLayer.bounds.size == size)
+            #expect(surface.metalLayer.contentsScale == window.backingScaleFactor)
+            #expect(surface.metalLayer.drawableSize == CGSize(
+                width: size.width * window.backingScaleFactor,
+                height: size.height * window.backingScaleFactor))
+            let changes = sizeChanges
+            surface.layout()
+            #expect(sizeChanges == changes)
+        }
+        #expect(sizeChanges >= 5)
+    }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
+    func resizingPausedVideoUpdatesRenderedSizeWithoutChangingPosition() async throws {
+        let source = try makeTestMKV()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let engine = MPVPlayerEngine()
+        let host = NSHostingView(rootView: PlayerSurface(engine: engine).frame(maxWidth: .infinity, maxHeight: .infinity))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 360),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { engine.stop(); window.close() }
+        window.contentView = host
+        window.orderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        engine.load(url: source, autoplay: false)
+        try await waitUntil { engine.state == .paused && engine.renderedPixelSize.width > 0 }
+        await engine.seek(to: 1.5, exact: true)
+        let position = engine.currentTime
+
+        for size in [CGSize(width: 1280, height: 720), CGSize(width: 800, height: 600),
+                     CGSize(width: 640, height: 360)] {
+            window.setContentSize(size)
+            host.layoutSubtreeIfNeeded()
+            let pixels = CGSize(width: size.width * window.backingScaleFactor,
+                                height: size.height * window.backingScaleFactor)
+            try await waitUntil(timeout: 30) { engine.renderedPixelSize == pixels && engine.state == .paused }
+            #expect(abs(engine.currentTime - position) < 0.2)
+        }
+        engine.stop()
+        try await waitUntil { engine.renderedPixelSize == .zero }
     }
 
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
