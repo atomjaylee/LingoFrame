@@ -49,6 +49,8 @@ struct MainShell: View {
         collapsed ? 128 : RexChrome.contentLeading
     }
 
+    private let sidebarAnimation = Animation.smooth(duration: 0.28)
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             NavigationStack(path: $path) {
@@ -60,28 +62,23 @@ struct MainShell: View {
             }
             .environment(\.contentLeadingInset, inset)
 
-            if collapsed {
-                Button { withAnimation(.easeOut(duration: 0.2)) { collapsed = false } } label: {
-                    Image(systemName: "sidebar.left")
-                }
-                .buttonStyle(RexIconButtonStyle(diameter: 32))
-                .accessibilityLabel("展开侧边栏")
-                .padding(.leading, 84)
-                .padding(.top, 10)
+            Sidebar(section: $section)
+                .frame(width: RexChrome.sidebarWidth)
+                .padding(RexChrome.sidebarInset)
+                .ignoresSafeArea(edges: .top)
+                .offset(x: collapsed ? -(RexChrome.sidebarWidth + RexChrome.sidebarInset * 2) : 0)
+                .opacity(collapsed ? 0 : 1)
+                .allowsHitTesting(!collapsed)
+                .accessibilityHidden(collapsed)
 
-                WindowTrafficLights(window: window)
-                    .padding(.leading, 22)
-                    .padding(.top, 17)
-                    .ignoresSafeArea(edges: .top)
-            } else {
-                Sidebar(section: $section, window: window,
-                        collapse: { withAnimation(.easeOut(duration: 0.2)) { collapsed = true } })
-                    .frame(width: RexChrome.sidebarWidth)
-                    .padding(RexChrome.sidebarInset)
-                    .ignoresSafeArea(edges: .top)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+            WindowChromeControls(window: window, collapsed: collapsed) {
+                withAnimation(sidebarAnimation) { collapsed.toggle() }
             }
+            .padding(.leading, 22)
+            .padding(.top, 17)
+            .ignoresSafeArea(edges: .top)
         }
+        .animation(sidebarAnimation, value: collapsed)
         .background(WindowAccessor { window = $0 })
         .onChange(of: section) { path = NavigationPath() }
         .task { await model.refreshAll() }
@@ -238,30 +235,51 @@ private struct WindowTrafficLights: View {
     }
 }
 
+/// 窗口控制区保持固定，侧边栏在它下方滑入滑出，避免收起时按钮跟着跳位。
+private struct WindowChromeControls: View {
+    let window: NSWindow?
+    let collapsed: Bool
+    let toggleSidebar: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            WindowTrafficLights(window: window)
+
+            Button(action: toggleSidebar) {
+                HStack(spacing: 8) {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 15, weight: .medium))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .rotationEffect(collapsed ? .degrees(-90) : .zero)
+                }
+                .foregroundStyle(.white.opacity(0.92))
+                .frame(width: 50, height: 28)
+                .background(.black.opacity(0.38), in: Capsule())
+                .overlay {
+                    Capsule().stroke(.white.opacity(0.2), lineWidth: 0.8)
+                }
+                .shadow(color: .black.opacity(0.22), radius: 1, y: 1)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(collapsed ? "展开侧边栏" : "收起侧边栏")
+        }
+    }
+}
+
 // MARK: - 侧边栏
 
 /// 照抄 Rex：搜索 / 发现 / 学习三组，每行 40 高、15 号半粗字，选中行浅白底；设置固定在最底下。
 private struct Sidebar: View {
     @Binding var section: ShellSection
-    let window: NSWindow?
-    let collapse: () -> Void
     @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 0) {
-                WindowTrafficLights(window: window)
-                    .padding(.leading, 4)
-                Spacer().frame(width: 28)
-                Button(action: collapse) { Image(systemName: "sidebar.left").font(.system(size: 15)) }
-                    .buttonStyle(.plain)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-                    .accessibilityLabel("收起侧边栏")
-                Spacer()
-            }
-            .frame(height: 32)
-            .padding(.bottom, 10)
+            Color.clear
+                .frame(height: 32)
+                .padding(.bottom, 10)
 
             row("搜索", icon: "magnifyingglass", isSelected: section == .search) { section = .search }
                 .keyboardShortcut("k", modifiers: .command)
