@@ -135,6 +135,7 @@ private struct PlayerScreen: View {
     /// 鼠标在画面上 / 在控制面板上。控制条跟着鼠标出现和消失（像 Infuse 一样）。
     @State private var mouseInside = false
     @State private var overControls = false
+    @State private var menuTracking = false
     @State private var lookup: WordLookup?
     @State private var fittedVideoSize: CGSize = .zero
 
@@ -168,6 +169,14 @@ private struct PlayerScreen: View {
         .onDisappear { keyMonitor.stop() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
             if let window, note.object as? NSWindow === window { model.activeSession = session }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in
+            menuTracking = true
+            hideTask?.cancel()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
+            menuTracking = false
+            poke()
         }
         .onChange(of: session.engine.state) { _, state in
             if state == .ended { session.handleEnded() }
@@ -307,7 +316,7 @@ private struct PlayerScreen: View {
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(for: .seconds(seconds))
-            guard !Task.isCancelled, !isScrubbing, lookup == nil else { return }
+            guard !Task.isCancelled, !isScrubbing, !menuTracking, lookup == nil else { return }
             if mouseInside {
                 guard session.engine.state == .playing, !overControls else { return }
                 controlsVisible = false
@@ -470,7 +479,7 @@ private struct CloseButton: View {
 
 // MARK: - 控制面板
 
-/// Infuse 式底部控制层：进度在上、操作在下，浮在渐变遮罩上，不再使用厚重的悬浮卡片。
+/// 经典双行控制器：上排进度，下排音量、居中播放和右侧设置。
 private struct ControlBar: View {
     let session: PlaybackSession
     @Binding var isScrubbing: Bool
@@ -482,121 +491,150 @@ private struct ControlBar: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 14) {
-                TimeText(engine: engine, remaining: false)
+                TimeText(engine: engine, showsDuration: false)
                 Scrubber(engine: engine, isScrubbing: $isScrubbing)
-                TimeText(engine: engine, remaining: true)
+                TimeText(engine: engine, showsDuration: true)
             }
-            ZStack {
-                HStack(spacing: 6) {
-                    PlayerControlButton(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                                        size: 16, label: engine.isMuted ? "取消静音" : "静音") {
-                        session.toggleMute()
+            GeometryReader { geometry in
+                let compact = geometry.size.width < 860
+                ZStack {
+                    HStack(spacing: 6) {
+                        PlayerControlButton(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                                            size: 16, label: engine.isMuted ? "取消静音" : "静音") {
+                            session.toggleMute()
+                        }
+                        ThinSlider(value: Binding(get: { engine.isMuted ? 0 : Double(engine.volume) },
+                                                  set: { engine.volume = Float($0); engine.isMuted = false }))
+                            .frame(width: compact ? 70 : 120)
+                            .accessibilityLabel("音量")
+                        Spacer()
                     }
-                    ThinSlider(value: Binding(get: { engine.isMuted ? 0 : Double(engine.volume) },
-                                              set: { engine.volume = Float($0); engine.isMuted = false }))
-                        .frame(width: 120)
-                        .accessibilityLabel("音量")
-                    Spacer()
+                    HStack(spacing: 14) {
+                        icon("backward.end.fill", size: 17, label: "上一集") {
+                            if let prev = session.previousItem { Task { await session.play(itemID: prev.id, resume: true) } }
+                        }
+                        .disabled(session.previousItem == nil)
+                        .opacity(session.previousItem == nil ? 0.35 : 1)
+                        icon("gobackward.10", size: 20, label: "后退 10 秒（⇧←）") { session.seek(by: -10) }
+                        PlayerControlButton(systemName: engine.state == .playing ? "pause.fill" : "play.fill", size: 22,
+                                            label: engine.state == .playing ? "暂停（空格）" : "播放（空格）",
+                                            prominent: true) { session.togglePlay() }
+                        icon("goforward.10", size: 20, label: "前进 10 秒（⇧→）") { session.seek(by: 10) }
+                        icon("forward.end.fill", size: 17, label: "下一集") {
+                            if let next = session.nextItem { Task { await session.play(itemID: next.id, resume: true) } }
+                        }
+                        .disabled(session.nextItem == nil)
+                        .opacity(session.nextItem == nil ? 0.35 : 1)
+                    }
+                    HStack(spacing: compact ? 6 : 8) {
+                        Spacer()
+                        speedMenu
+                        if !compact {
+                            separator
+                            if engine.audioOptions.count > 1 { audioTrackMenu }
+                            if !engine.subtitleOptions.isEmpty { subtitleTrackMenu }
+                            separator
+                        }
+                        settingsMenu
+                        icon(window?.styleMask.contains(.fullScreen) == true ? "arrow.down.right.and.arrow.up.left"
+                             : "arrow.up.left.and.arrow.down.right", size: 16, label: "全屏（回车）") { window?.toggleFullScreen(nil) }
+                        PlayerControlButton(systemName: "list.bullet", size: 17, label: "打开字幕窗口") {
+                            openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
+                        }
+                    }
                 }
-                HStack(spacing: 14) {
-                    icon("backward.end.fill", size: 17, label: "上一集") {
-                        if let prev = session.previousItem { Task { await session.play(itemID: prev.id, resume: true) } }
-                    }
-                    .disabled(session.previousItem == nil)
-                    .opacity(session.previousItem == nil ? 0.35 : 1)
-                    icon("gobackward.10", size: 20, label: "后退 10 秒（⇧←）") { session.seek(by: -10) }
-                    PlayerControlButton(systemName: engine.state == .playing ? "pause.fill" : "play.fill", size: 22,
-                                        label: engine.state == .playing ? "暂停（空格）" : "播放（空格）",
-                                        prominent: true) { session.togglePlay() }
-                    icon("goforward.10", size: 20, label: "前进 10 秒（⇧→）") { session.seek(by: 10) }
-                    icon("forward.end.fill", size: 17, label: "下一集") {
-                        if let next = session.nextItem { Task { await session.play(itemID: next.id, resume: true) } }
-                    }
-                    .disabled(session.nextItem == nil)
-                    .opacity(session.nextItem == nil ? 0.35 : 1)
-                }
-                HStack(spacing: 10) {
-                    Spacer()
-                    if !engine.subtitleOptions.isEmpty { subtitleTrackMenu }
-                    if engine.audioOptions.count > 1 { audioTrackMenu }
-                    settingsMenu
-                    icon(window?.styleMask.contains(.fullScreen) == true ? "arrow.down.right.and.arrow.up.left"
-                         : "arrow.up.left.and.arrow.down.right", size: 16, label: "全屏（回车）") { window?.toggleFullScreen(nil) }
-                    PlayerControlButton(systemName: "list.bullet", size: 17, label: "打开字幕窗口") {
-                        openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
-                    }
-                }
+                .frame(height: 44)
             }
+            .frame(height: 44)
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 30)
-        .padding(.bottom, 4)
-        .frame(maxWidth: 980)
+        .padding(.horizontal, 32)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
     }
 
     private func icon(_ name: String, size: Double, label: String, action: @escaping () -> Void) -> some View {
         PlayerControlButton(systemName: name, size: size, label: label, action: action)
     }
 
-    /// 设置：播放速度、音轨。
+    private var separator: some View {
+        Rectangle().fill(.white.opacity(0.24)).frame(width: 1, height: 18)
+    }
+
+    private var speedMenu: some View {
+        Menu { rateOptions } label: {
+            HStack(spacing: 5) {
+                Text(engine.rate == engine.rate.rounded() ? String(format: "%.1f×", engine.rate)
+                     : String(format: "%g×", engine.rate))
+                    .monospacedDigit()
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .frame(width: 64, height: 34)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help("播放速度（[ 和 ] 调速度）")
+        .accessibilityLabel("播放速度")
+    }
+
+    private var rateOptions: some View {
+        ForEach(PlaybackSession.rateSteps, id: \.self) { rate in
+            Button { session.setRate(rate) } label: {
+                if abs(rate - engine.rate) < 0.001 { Label(String(format: "%g×", rate), systemImage: "checkmark") }
+                else { Text(String(format: "%g×", rate)) }
+            }
+        }
+    }
+
+    /// 窄窗口收起独立的音轨、字幕图标，仍可在设置中使用全部选项。
     private var settingsMenu: some View {
         Menu {
-            Menu("速度 \(String(format: "%g×", engine.rate))") {
-                ForEach(PlaybackSession.rateSteps, id: \.self) { rate in
-                    Button {
-                        session.setRate(rate)
-                    } label: {
-                        if abs(rate - engine.rate) < 0.001 { Label(String(format: "%g×", rate), systemImage: "checkmark") }
-                        else { Text(String(format: "%g×", rate)) }
-                    }
-                }
-            }
+            Menu("播放速度") { rateOptions }
+            if !engine.audioOptions.isEmpty { Menu("音轨") { audioOptions } }
+            if !engine.subtitleOptions.isEmpty { Menu("字幕") { subtitleOptions } }
         } label: {
             HoverControlIcon(systemName: "gearshape.fill", size: 17)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("播放速度（[ 和 ] 调速度）")
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help("播放设置")
+        .accessibilityLabel("播放设置")
+    }
+
+    private var audioOptions: some View {
+        ForEach(engine.audioOptions) { option in
+            Button { engine.selectAudio(option.id) } label: {
+                if option.id == engine.selectedAudioID { Label(option.title, systemImage: "checkmark") }
+                else { Text(option.title) }
+            }
+        }
     }
 
     private var audioTrackMenu: some View {
-        Menu {
-            ForEach(engine.audioOptions) { option in
-                Button {
-                    engine.selectAudio(option.id)
-                } label: {
-                    if option.id == engine.selectedAudioID { Label(option.title, systemImage: "checkmark") }
-                    else { Text(option.title) }
-                }
-            }
-        } label: {
-            HoverControlIcon(systemName: "speaker.wave.2.fill", size: 16)
+        Menu { audioOptions } label: {
+            HoverControlIcon(systemName: "waveform", size: 16)
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
         .help("选择音轨")
         .accessibilityLabel("选择音轨")
     }
 
+    @ViewBuilder private var subtitleOptions: some View {
+        Button { session.selectPlaybackSubtitle(nil) } label: {
+            if engine.selectedSubtitleID == nil { Label("关闭", systemImage: "checkmark") }
+            else { Text("关闭") }
+        }
+        Divider()
+        ForEach(engine.subtitleOptions) { option in
+            Button { session.selectPlaybackSubtitle(option.id) } label: {
+                if option.id == engine.selectedSubtitleID { Label(option.title, systemImage: "checkmark") }
+                else { Text(option.title) }
+            }
+        }
+    }
+
     private var subtitleTrackMenu: some View {
-        Menu {
-            Button {
-                session.selectPlaybackSubtitle(nil)
-            } label: {
-                if engine.selectedSubtitleID == nil { Label("关闭", systemImage: "checkmark") }
-                else { Text("关闭") }
-            }
-            Divider()
-            ForEach(engine.subtitleOptions) { option in
-                Button {
-                    session.selectPlaybackSubtitle(option.id)
-                } label: {
-                    if option.id == engine.selectedSubtitleID { Label(option.title, systemImage: "checkmark") }
-                    else { Text(option.title) }
-                }
-            }
-        } label: {
+        Menu { subtitleOptions } label: {
             HoverControlIcon(systemName: "captions.bubble.fill", size: 16)
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
@@ -708,7 +746,7 @@ private struct Scrubber: View {
                 ForEach(engine.bufferedRanges, id: \.self) { range in
                     let start = min(max(range.lowerBound / duration, 0), 1)
                     let end = min(max(range.upperBound / duration, start), 1)
-                    Capsule().fill(.white.opacity(0.72))
+                    Capsule().fill(.white.opacity(0.4))
                         .frame(width: geo.size.width * (end - start), height: 4)
                         .offset(x: geo.size.width * start)
                 }
@@ -749,12 +787,12 @@ private struct Scrubber: View {
 
 private struct TimeText: View {
     let engine: NativePlayerEngine
-    let remaining: Bool
+    let showsDuration: Bool
 
     var body: some View {
-        Text(remaining ? "-" + TimeFormat.clock(max(engine.duration - engine.currentTime, 0)) : TimeFormat.clock(engine.currentTime))
+        Text(TimeFormat.clock(showsDuration ? engine.duration : engine.currentTime))
             .font(.system(size: 12, weight: .semibold))
             .monospacedDigit()
-            .frame(minWidth: 44, alignment: remaining ? .trailing : .leading)
+            .frame(minWidth: 44, alignment: showsDuration ? .trailing : .leading)
     }
 }
