@@ -1,3 +1,4 @@
+import AppKit
 import DesignSystem
 import MediaServerKit
 import PlaybackKit
@@ -41,6 +42,7 @@ struct MainShell: View {
 
     @State private var section: ShellSection = .home
     @State private var path = NavigationPath()
+    @State private var window: NSWindow?
     @AppStorage("sidebar.collapsed") private var collapsed = false
 
     private var inset: Double {
@@ -73,7 +75,13 @@ struct MainShell: View {
                     .ignoresSafeArea(edges: .top)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
+
+            WindowTrafficLights(window: window)
+                .padding(.leading, 22)
+                .padding(.top, 17)
+                .ignoresSafeArea(edges: .top)
         }
+        .background(WindowAccessor { window = $0 })
         .onChange(of: section) { path = NavigationPath() }
         .task { await model.refreshAll() }
         // 调试路由不等资源库刷新完：服务器慢的时候也能马上打开要检查的页面。
@@ -184,6 +192,48 @@ struct MainShell: View {
             break
         }
         #endif
+    }
+}
+
+/// 隐藏系统标题栏后，把窗口控制按钮嵌入侧边栏顶部，保持内容全窗口铺开。
+private struct WindowTrafficLights: View {
+    let window: NSWindow?
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            light(color: Color(red: 1, green: 0.37, blue: 0.34), symbol: "xmark", label: "关闭") {
+                window?.performClose(nil)
+            }
+            light(color: Color(red: 1, green: 0.74, blue: 0.18), symbol: "minus", label: "最小化") {
+                window?.miniaturize(nil)
+            }
+            light(color: Color(red: 0.16, green: 0.78, blue: 0.25), symbol: "plus", label: "缩放") {
+                window?.zoom(nil)
+            }
+        }
+        .onHover { hovering = $0 }
+    }
+
+    private func light(color: Color, symbol: String, label: String,
+                       action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Circle()
+                .fill(color)
+                .frame(width: 12, height: 12)
+                .overlay {
+                    if hovering {
+                        Image(systemName: symbol)
+                            .font(.system(size: 6.5, weight: .black))
+                            .foregroundStyle(.black.opacity(0.58))
+                    }
+                }
+                .shadow(color: .black.opacity(0.2), radius: 0.5, y: 0.5)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .help(label)
     }
 }
 
