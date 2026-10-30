@@ -89,6 +89,7 @@ public struct RexPillButtonStyle: ButtonStyle {
             .background(.white.opacity(dimmed ? 0.10 : configuration.isPressed ? 0.24 : 0.16), in: Capsule())
             .background(.ultraThinMaterial, in: Capsule())
             .contentShape(Capsule())
+            .clickablePointer()
     }
 }
 
@@ -105,6 +106,7 @@ public struct RexBackButtonStyle: ButtonStyle {
             .background(.ultraThinMaterial, in: Circle())
             .overlay(Circle().strokeBorder(.white.opacity(0.2), lineWidth: 1))
             .contentShape(Circle())
+            .clickablePointer()
     }
 }
 
@@ -118,6 +120,7 @@ public struct RexHeroIconButtonStyle: ButtonStyle {
             .foregroundStyle(.white.opacity(configuration.isPressed ? 0.6 : 1))
             .frame(width: 32, height: 32)
             .contentShape(Rectangle())
+            .clickablePointer()
     }
 }
 
@@ -166,6 +169,7 @@ public struct RexCapsuleChipStyle: ButtonStyle {
             .frame(height: 30)
             .background(.white.opacity(isSelected ? 0.24 : configuration.isPressed ? 0.16 : 0.10), in: Capsule())
             .contentShape(Capsule())
+            .clickablePointer()
     }
 }
 

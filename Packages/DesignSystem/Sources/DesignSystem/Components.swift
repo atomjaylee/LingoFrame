@@ -13,9 +13,32 @@ private struct ClickablePointer: ViewModifier {
     }
 }
 
+private struct HoverTransition<Value: Equatable>: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let value: Value
+
+    func body(content: Content) -> some View {
+        content.animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: value)
+    }
+}
+
 extension View {
     /// 可操作时显示手形，禁用时恢复默认指针；由系统处理移入和移出。
     public func clickablePointer() -> some View { modifier(ClickablePointer()) }
+
+    /// 悬停反馈统一短过渡，并遵循系统的减少动态效果设置。
+    public func hoverTransition<Value: Equatable>(value: Value) -> some View {
+        modifier(HoverTransition(value: value))
+    }
+}
+
+/// 保留系统朴素按钮的外观和触发行为，只给实际按钮加手形指针。
+public struct ClickablePlainButtonStyle: PrimitiveButtonStyle {
+    public init() {}
+
+    public func makeBody(configuration: Configuration) -> some View {
+        Button(configuration).buttonStyle(.plain).clickablePointer()
+    }
 }
 
 /// 主按钮 rx-btn--primary：白色胶囊，一个页面只放一个。
@@ -159,7 +182,7 @@ public struct GlassButtonGroup<Content: View>: View {
 
     public var body: some View {
         HStack(spacing: theme.metrics.space(6)) { content }
-            .buttonStyle(.plain)
+            .buttonStyle(ClickablePlainButtonStyle())
             .font(.system(size: 19, weight: .regular))
             .foregroundStyle(theme.colors.ink.color)
             .padding(.horizontal, theme.metrics.space(6))
@@ -448,7 +471,7 @@ private struct PosterTileBody: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusMd, style: .continuous))
                 .scaleEffect(c.isHovered ? 1.03 : 1)
-                .animation(.easeOut(duration: 0.15), value: c.isHovered)
+                .hoverTransition(value: c.isHovered)
             VStack(alignment: .leading, spacing: 2) {
                 Text(c.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.colors.ink.color)
                 if let subtitle = c.subtitle {
@@ -485,7 +508,7 @@ private struct LandscapeTileBody: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusMd, style: .continuous))
                 .scaleEffect(c.isHovered ? 1.02 : 1)
-                .animation(.easeOut(duration: 0.15), value: c.isHovered)
+                .hoverTransition(value: c.isHovered)
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(c.title).themedFont(.headline).foregroundStyle(theme.colors.ink.color)

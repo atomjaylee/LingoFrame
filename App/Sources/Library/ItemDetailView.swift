@@ -214,6 +214,7 @@ struct ItemDetailView: View {
                     ForEach(episodes) { ep in
                         EpisodeTile(episode: ep)
                             .onTapGesture { play(ep, resume: true) }
+                            .clickablePointer()
                             .contextMenu {
                                 Button("播放") { play(ep, resume: true) }
                                 Button("从头播放") { play(ep, resume: false) }
@@ -250,13 +251,14 @@ struct ItemDetailView: View {
                     SourceCard(source: source, serverName: model.server(serverID)?.name ?? "Emby", isSelected: source.id == selected?.id)
                         .onTapGesture { sourceID = source.id }
                         .onTapGesture(count: 2) { play(item, resume: true) }
+                        .clickablePointer()
                 }
             }
             Button { withAnimation(.easeOut(duration: 0.2)) { showsStreams.toggle() } } label: {
                 Label(showsStreams ? "收起" : "展开", systemImage: showsStreams ? "chevron.up.circle" : "chevron.down.circle")
                     .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.72))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ClickablePlainButtonStyle())
             .frame(maxWidth: 803)
             if showsStreams, let selected { StreamCards(source: selected).frame(maxWidth: 803) }
         }
@@ -418,6 +420,7 @@ struct EpisodeTile: View {
         .frame(width: 240, alignment: .leading)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
+        .hoverTransition(value: isHovered)
     }
 }
 

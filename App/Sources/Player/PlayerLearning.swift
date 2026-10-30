@@ -105,6 +105,7 @@ private struct SubtitleWord: View {
             }
             .contentShape(Rectangle())
             .onHover { isHovered = $0 }
+            .hoverTransition(value: isHovered)
             .onTapGesture(perform: action)
             .clickablePointer()
     }

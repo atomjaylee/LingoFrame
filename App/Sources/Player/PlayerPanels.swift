@@ -167,7 +167,7 @@ private struct EpisodesPanel: View {
                         in: RoundedRectangle(cornerRadius: theme.metrics.radiusMd, style: .continuous))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ClickablePlainButtonStyle())
     }
 }
 

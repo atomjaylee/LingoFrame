@@ -471,7 +471,7 @@ private struct CloseButton: View {
         }
         .buttonStyle(.plain).clickablePointer()
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .hoverTransition(value: hovering)
         .keyboardShortcut("w", modifiers: .command)
         .help("关闭播放窗口（⌘W）")
     }
@@ -576,6 +576,7 @@ private struct ControlBar: View {
         }
         .menuStyle(.button).buttonStyle(.plain).clickablePointer().menuIndicator(.hidden).fixedSize()
         .onHover { speedHovered = $0 }
+        .hoverTransition(value: speedHovered)
         .help("播放速度（[ 和 ] 调速度）")
         .accessibilityLabel("播放速度")
     }
@@ -667,7 +668,7 @@ private struct PlayerControlButton: View {
         .buttonStyle(.plain).clickablePointer()
         .onHover { hovering = $0 && isEnabled }
         .onChange(of: isEnabled) { _, enabled in if !enabled { hovering = false } }
-        .animation(.easeOut(duration: 0.1), value: hovering)
+        .hoverTransition(value: hovering)
         .help(label)
         .accessibilityLabel(label)
     }
@@ -686,7 +687,7 @@ private struct HoverControlIcon: View {
             .contentShape(Circle())
             .scaleEffect(hovering ? 1.06 : 1)
             .onHover { hovering = $0 }
-            .animation(.easeOut(duration: 0.1), value: hovering)
+            .hoverTransition(value: hovering)
     }
 }
 

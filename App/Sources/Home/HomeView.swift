@@ -176,7 +176,7 @@ struct HomeView: View {
                                       imageURL: model.tmdb?.imageURL(title.posterPath, size: .poster),
                                       badge: BadgeModel(entry.level, kind: .accent))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(ClickablePlainButtonStyle())
                         .frame(width: 150)
                         .help(entry.reason)
                     }

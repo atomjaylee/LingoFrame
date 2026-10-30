@@ -57,7 +57,7 @@ private struct SourcePicker: View {
                 }
                 Spacer()
                 Button(action: close) { Image(systemName: "xmark").font(.system(size: 13, weight: .bold)) }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ClickablePlainButtonStyle())
                     .frame(width: 32, height: 32)
                     .overlay(Circle().strokeBorder(.primary.opacity(0.22), lineWidth: 1))
                     .contentShape(Circle())
@@ -66,7 +66,7 @@ private struct SourcePicker: View {
             .padding(.leading, 4)
 
             section("媒体服务器") {
-                Button(action: chooseEmby) { tile("Emby") { EmbyMark(size: 58) } }.buttonStyle(.plain)
+                Button(action: chooseEmby) { tile("Emby") { EmbyMark(size: 58) } }.buttonStyle(ClickablePlainButtonStyle())
                 tile("Jellyfin", soon: true) { symbol("triangle.fill", Color(red: 0.48, green: 0.43, blue: 0.84)) }
                 tile("Plex", soon: true) {
                     Text("plex").font(.system(size: 19, weight: .heavy)).foregroundStyle(.white)
@@ -162,7 +162,7 @@ private struct EmbyConnectForm: View {
                     if pasted.isEmpty { pasted = NSPasteboard.general.string(forType: .string) ?? "" }
                     recognize()
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ClickablePlainButtonStyle())
                 .font(.system(size: 13, weight: .bold))
                 .padding(.horizontal, 12)
                 .frame(height: 26)
@@ -216,14 +216,14 @@ private struct EmbyConnectForm: View {
                 .focused($focus, equals: .password)
                 .onSubmit(save)
                 Button { showsPassword.toggle() } label: { Image(systemName: showsPassword ? "eye" : "eye.slash") }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ClickablePlainButtonStyle())
                     .accessibilityLabel(showsPassword ? "隐藏密码" : "显示密码")
             }
             .textFieldStyle(.plain).font(.system(size: 14))
             .padding(.horizontal, 11).frame(height: 30).fieldChrome()
 
             HStack(spacing: 10) {
-                Button("测试连通性", action: test).disabled(host.isEmpty || isBusy)
+                Button("测试连通性", action: test).clickablePointer().disabled(host.isEmpty || isBusy)
                 if isBusy { ProgressView().controlSize(.small) }
                 if let message {
                     HStack(spacing: 6) {
@@ -239,9 +239,9 @@ private struct EmbyConnectForm: View {
 
             HStack(spacing: 10) {
                 Spacer()
-                Button("取消", action: close).frame(width: 80)
+                Button("取消", action: close).frame(width: 80).clickablePointer()
                 Button("保存", action: save)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.borderedProminent).clickablePointer()
                     .tint(RexChrome.accentBlue.color)
                     .keyboardShortcut(.defaultAction)
                     .disabled(host.isEmpty || username.isEmpty || isBusy)

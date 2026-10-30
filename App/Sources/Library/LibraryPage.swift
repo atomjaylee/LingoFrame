@@ -22,7 +22,7 @@ struct LibraryPage: View {
                     }
                     Button { showsAddDialog = true } label: { Label("添加资源库", systemImage: "externaldrive.badge.plus") }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ClickablePlainButtonStyle())
                 .font(.system(size: 14, weight: .semibold))
                 .padding(.trailing, 4)
 
@@ -44,14 +44,14 @@ struct LibraryPage: View {
                             NavigationLink(value: Route.server(server.id)) {
                                 ServerCard(server: server)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(ClickablePlainButtonStyle())
                             .overlay(alignment: .topLeading) {
                                 if isEditing {
                                     Button { pendingRemoval = server } label: {
                                         Image(systemName: "minus.circle.fill").symbolRenderingMode(.palette)
                                             .foregroundStyle(.white, .red).font(.system(size: 20))
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(ClickablePlainButtonStyle())
                                     .offset(x: -7, y: -7)
                                     .accessibilityLabel("删除 \(server.name)")
                                 }
@@ -139,6 +139,7 @@ private struct ServerCard: View {
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(RexChrome.cardStroke.color, lineWidth: 1.5))
         .contentShape(RoundedRectangle(cornerRadius: 18))
         .onHover { isHovered = $0 }
+        .hoverTransition(value: isHovered)
     }
 
     private var statusText: String {
@@ -212,7 +213,7 @@ private struct LibraryShelf: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ClickablePlainButtonStyle())
 
             if items.isEmpty {
                 if isLoading {

@@ -211,6 +211,7 @@ private struct WindowTrafficLights: View {
             }
         }
         .onHover { hovering = $0 }
+        .hoverTransition(value: hovering)
     }
 
     private func light(color: Color, symbol: String, label: String,
@@ -229,7 +230,7 @@ private struct WindowTrafficLights: View {
                 .shadow(color: .black.opacity(0.2), radius: 0.5, y: 0.5)
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ClickablePlainButtonStyle())
         .accessibilityLabel(label)
         .help(label)
     }
@@ -262,7 +263,7 @@ private struct WindowChromeControls: View {
                 .shadow(color: .black.opacity(0.22), radius: 1, y: 1)
                 .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ClickablePlainButtonStyle())
             .accessibilityLabel(collapsed ? "展开侧边栏" : "收起侧边栏")
         }
     }
@@ -299,7 +300,7 @@ private struct Sidebar: View {
 
             Spacer(minLength: 16)
             SettingsLink { rowLabel("设置", icon: "gearshape", isSelected: false, trailing: nil) }
-                .buttonStyle(.plain)
+                .buttonStyle(ClickablePlainButtonStyle())
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 18)
@@ -323,7 +324,7 @@ private struct Sidebar: View {
     private func row(_ title: String, icon: String, isSelected: Bool, trailing: String? = nil,
                      action: @escaping () -> Void) -> some View {
         Button(action: action) { rowLabel(title, icon: icon, isSelected: isSelected, trailing: trailing) }
-            .buttonStyle(.plain)
+            .buttonStyle(ClickablePlainButtonStyle())
     }
 
     private func rowLabel(_ title: String, icon: String, isSelected: Bool, trailing: String?) -> some View {
@@ -463,7 +464,7 @@ struct ItemCard: View {
                 NavigationLink(value: Route.detail(DetailTarget(tmdb: item.tmdbRef, serverID: serverID, item: item))) { card }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ClickablePlainButtonStyle())
         .contextMenu {
             if item.isPlayable {
                 Button("播放") { play(item) }

@@ -93,7 +93,7 @@ struct DockView: View {
                             .foregroundStyle(theme.colors.ink.color)
                             .frame(width: 28, height: 28)
                     }
-                    .menuStyle(.borderlessButton)
+                    .menuStyle(.borderlessButton).clickablePointer()
                     .menuIndicator(.hidden)
                     .fixedSize()
                     .help("面板操作")

@@ -124,16 +124,16 @@ private struct TMDBSettings: View {
                         if let testResult {
                             Text(testResult).foregroundStyle(status == false ? Color.red : .secondary).lineLimit(1)
                         }
-                        Button("测试连接") { test() }.disabled(isTesting)
+                        Button("测试连接") { test() }.clickablePointer().disabled(isTesting)
                     }
                 }
                 LabeledContent("API 密钥") {
                     HStack {
                         SecureField("", text: $token, prompt: Text(model.hasCustomTMDBToken ? "已保存密钥" : "尚未配置"))
                             .frame(width: 200)
-                        Button("保存") { model.tmdbToken = token; token = "" }.disabled(token.isEmpty)
+                        Button("保存") { model.tmdbToken = token; token = "" }.clickablePointer().disabled(token.isEmpty)
                         if model.hasCustomTMDBToken {
-                            Button("删除") { model.tmdbToken = "" }
+                            Button("删除") { model.tmdbToken = "" }.clickablePointer()
                         }
                     }
                 }
@@ -151,7 +151,8 @@ private struct TMDBSettings: View {
                         model.tmdbConfig = .default
                         load()
                     }
-                    Button("保存地址") { saveAddresses() }
+                    .clickablePointer()
+                    Button("保存地址") { saveAddresses() }.clickablePointer()
                 }
             } header: {
                 Text("TMDB")
@@ -217,16 +218,16 @@ private struct LayoutSettings: View {
                         Text(preset.name)
                         if preset.isBuiltin { Text("内置").font(.caption).foregroundStyle(.secondary) }
                         Spacer()
-                        Button("应用") { store.apply(preset) }
+                        Button("应用") { store.apply(preset) }.clickablePointer()
                         if !preset.isBuiltin {
-                            Button("删除", role: .destructive) { store.deletePreset(preset.id) }
+                            Button("删除", role: .destructive) { store.deletePreset(preset.id) }.clickablePointer()
                         }
                     }
                 }
             }
             Section {
-                Button("将当前布局存为预设") { store.saveCurrentAsPreset() }
-                Button("恢复默认布局") { store.apply(LayoutStore.defaultPreset) }
+                Button("将当前布局存为预设") { store.saveCurrentAsPreset() }.clickablePointer()
+                Button("恢复默认布局") { store.apply(LayoutStore.defaultPreset) }.clickablePointer()
             } footer: {
                 Text("在播放窗口里可以拖动面板分隔条、右键面板标签移动位置，布局会自动保存。")
                     .font(.caption).foregroundStyle(.secondary)
@@ -248,7 +249,7 @@ private struct AccountSettings: View {
                     Section(server.name) {
                         LabeledContent("地址", value: server.account.serverURL.absoluteString)
                         LabeledContent("用户", value: server.account.userName)
-                        Button("移除资源库", role: .destructive) { model.removeServer(server.id) }
+                        Button("移除资源库", role: .destructive) { model.removeServer(server.id) }.clickablePointer()
                     }
                 }
             }
