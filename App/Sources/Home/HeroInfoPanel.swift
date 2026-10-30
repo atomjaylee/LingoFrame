@@ -127,7 +127,7 @@ struct HeroBackdrop: View {
     var body: some View {
         // 图片放在 overlay 里，按比例填满时不会把外面的布局撑宽。
         Color.clear
-            .overlay { RemoteImage(url: url, maxPixelSize: 3000) }
+            .overlay { RemoteImage(url: url, maxPixelSize: 4096) }
             .clipped()
             .overlay {
                 LinearGradient(stops: [.init(color: .black.opacity(0.25), location: 0),

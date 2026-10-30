@@ -46,7 +46,7 @@ struct ItemDetailView: View {
 
     private var backdropURL: URL? {
         tmdb?.imageURL(info?.backdropPath, size: .original)
-            ?? emby.flatMap { client?.imageURL(for: $0, type: .backdrop, maxWidth: 2560) }
+            ?? emby.flatMap { client?.imageURL(for: $0, type: .backdrop, maxWidth: 4096) }
     }
 
     var body: some View {
@@ -273,14 +273,14 @@ struct ItemDetailView: View {
                     ForEach(seasons, id: \.number) { s in
                         MediaCard(title: s.name,
                                   subtitle: [s.year.map(String.init), s.episodeCount.map { "\($0) 集" }].compactMap { $0 }.joined(separator: " · "),
-                                  imageURL: tmdb?.imageURL(s.posterPath ?? info?.posterPath, size: .posterSmall))
+                                  imageURL: tmdb?.imageURL(s.posterPath ?? info?.posterPath, size: .posterLarge))
                             .frame(width: 150)
                     }
                 }
             }
             .scrollIndicators(.never)
             .fixedSize(horizontal: false, vertical: true)
-            .mediaCardStyle(PosterTileStyle())
+            .mediaCardStyle(PosterTileStyle(maxPixelSize: 900))
         }
     }
 

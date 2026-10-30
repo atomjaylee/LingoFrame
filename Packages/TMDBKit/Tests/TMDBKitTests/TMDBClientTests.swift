@@ -67,6 +67,16 @@ private let officeJSON = """
     #expect(client.imageURL(t.posterPath, size: .poster)?.absoluteString == "https://img.details.test/t/p/w500/p.jpg")
 }
 
+@Test func detailsPreferHighestResolutionBackdrop() async throws {
+    let session = Stub.session(host: "high-res.test") { _ in
+        (200, #"{"id":2316,"name":"办公室","overview":"简介","backdrop_path":"/default.jpg","images":{"backdrops":[{"file_path":"/hd.jpg","width":1920,"height":1080,"vote_average":9},{"file_path":"/4k.jpg","width":3840,"height":2160,"vote_average":6},{"file_path":"/unknown.jpg","vote_average":10}]}}"#)
+    }
+    let client = TMDBClient(token: "0123456789abcdef0123456789abcdef", config: config("high-res.test"), session: session, cacheDirectory: nil)
+    let title = try await client.details(TMDBRef(type: .tv, id: 2316))
+    #expect(title.backdropPath == "/4k.jpg")
+    #expect(client.imageURL(title.backdropPath, size: .original)?.path == "/t/p/original/4k.jpg")
+}
+
 @Test func bearerTokenGoesInHeaderAndResultsAreCached() async throws {
     let token = String(repeating: "x", count: 120)
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

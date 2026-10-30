@@ -437,21 +437,24 @@ public struct MediaCard: View {
 
 /// 海报：竖版海报（圆角 10，无边框无阴影）+ 左对齐片名 + 浅色年份。
 public struct PosterTileStyle: MediaCardStyle {
-    public init() {}
+    private let maxPixelSize: Int
+
+    public init(maxPixelSize: Int = 450) { self.maxPixelSize = maxPixelSize }
 
     public func makeBody(configuration c: MediaCardConfiguration) -> some View {
-        PosterTileBody(configuration: c)
+        PosterTileBody(configuration: c, maxPixelSize: maxPixelSize)
     }
 }
 
 private struct PosterTileBody: View {
     @Environment(\.theme) private var theme
     let configuration: MediaCardConfiguration
+    let maxPixelSize: Int
 
     var body: some View {
         let c = configuration
         VStack(alignment: .leading, spacing: 6) {
-            RemoteImage(url: c.imageURL, maxPixelSize: 450)
+            RemoteImage(url: c.imageURL, maxPixelSize: maxPixelSize)
                 .aspectRatio(2.0 / 3.0, contentMode: .fit)
                 .overlay(alignment: .topLeading) {
                     if let badge = c.badge { Badge(badge).padding(6) }

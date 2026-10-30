@@ -99,6 +99,8 @@ struct RawImage: Decodable {
     var filePath: String
     var iso6391: String?
     var voteAverage: Double?
+    var width: Int?
+    var height: Int?
 }
 
 struct RawImages: Decodable {
@@ -179,6 +181,14 @@ extension TMDBTitle {
         func best(_ lang: String?) -> RawImage? {
             logos.filter { $0.iso6391 == lang }.max { ($0.voteAverage ?? 0) < ($1.voteAverage ?? 0) }
         }
+        let backdrop = (raw.images?.backdrops ?? [])
+            .filter { ($0.width ?? 0) > 0 && ($0.height ?? 0) > 0 }
+            .max { lhs, rhs in
+                let leftPixels = (lhs.width ?? 0) * (lhs.height ?? 0)
+                let rightPixels = (rhs.width ?? 0) * (rhs.height ?? 0)
+                return leftPixels == rightPixels
+                    ? (lhs.voteAverage ?? 0) < (rhs.voteAverage ?? 0) : leftPixels < rightPixels
+            }?.filePath ?? raw.backdropPath
         self.init(
             ref: TMDBRef(type: type, id: raw.id),
             title: raw.title ?? raw.name ?? "",
@@ -193,7 +203,7 @@ extension TMDBTitle {
             networks: raw.networks?.map(\.name) ?? [],
             originalLanguage: raw.originalLanguage,
             posterPath: raw.posterPath,
-            backdropPath: raw.backdropPath,
+            backdropPath: backdrop,
             logoPath: (best("en") ?? best("zh") ?? best(nil) ?? logos.first)?.filePath,
             cast: (raw.credits?.cast ?? []).sorted { ($0.order ?? 999) < ($1.order ?? 999) }.prefix(12).map {
                 TMDBCast(id: $0.id, name: $0.name, character: $0.character, profilePath: $0.profilePath)
