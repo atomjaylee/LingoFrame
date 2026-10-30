@@ -12,7 +12,7 @@ struct ELEnglishApp: App {
                 .appEnvironment(model)
                 .frame(minWidth: 1000, minHeight: 640)
         }
-        .windowStyle(.titleBar)
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1440, height: 900)
         .commands { AppCommands(model: model) }
 
@@ -73,14 +73,7 @@ struct RootView: View {
     var body: some View {
         MainShell()
         .rexWindowBackground()
-        .background(WindowAccessor { window in
-            guard let window else { return }
-            window.titlebarAppearsTransparent = true
-            window.titleVisibility = .hidden
-            window.standardWindowButton(.closeButton)?.isHidden = false
-            window.standardWindowButton(.miniaturizeButton)?.isHidden = false
-            window.standardWindowButton(.zoomButton)?.isHidden = false
-        })
+        .toolbar(.hidden, for: .windowToolbar)
         // 从访达打开的视频文件交给播放窗口，主窗口不重复打开。
         .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         .onOpenURL { url in

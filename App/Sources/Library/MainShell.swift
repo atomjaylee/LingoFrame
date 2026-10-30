@@ -52,8 +52,9 @@ struct MainShell: View {
             NavigationStack(path: $path) {
                 content
                     .navigationDestination(for: Route.self) { route in
-                        destination(route)
+                        destination(route).toolbar(.hidden, for: .windowToolbar)
                     }
+                    .toolbar(.hidden, for: .windowToolbar)
             }
             .environment(\.contentLeadingInset, inset)
 
