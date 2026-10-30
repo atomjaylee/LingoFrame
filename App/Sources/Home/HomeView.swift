@@ -156,6 +156,7 @@ struct HomeView: View {
                 }
                 .padding(.leading, inset)
                 .padding(.trailing, RexChrome.contentTrailing)
+                .padding(.vertical, 6)
             }
             .scrollIndicators(.never)
             .fixedSize(horizontal: false, vertical: true)
@@ -183,6 +184,7 @@ struct HomeView: View {
                 }
                 .padding(.leading, inset)
                 .padding(.trailing, RexChrome.contentTrailing)
+                .padding(.vertical, 6)
             }
             .scrollIndicators(.never)
             .fixedSize(horizontal: false, vertical: true)
