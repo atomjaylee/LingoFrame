@@ -446,16 +446,16 @@ private struct CloseButton: View {
 
     var body: some View {
         Button { window?.performClose(nil) } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "xmark").font(.system(size: 13, weight: .semibold))
-                Text("关闭").font(.system(size: 13, weight: .medium))
+            HStack(spacing: 6) {
+                Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                Text("关闭").font(.system(size: 12, weight: .medium))
             }
-            .padding(.leading, 10)
-            .padding(.trailing, 12)
-            .frame(height: 31)
-            .background(.black.opacity(hovering ? 0.24 : 0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .padding(.leading, 8)
+            .padding(.trailing, 10)
+            .frame(height: 27)
+            .background(.black.opacity(hovering ? 0.24 : 0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(.white.opacity(hovering ? 0.22 : 0.13), lineWidth: 1))
             .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
             .contentShape(Rectangle())
