@@ -97,11 +97,11 @@ private func account(host: String) -> EmbyAccount {
     #expect(backdrop.path == "/Items/s9/Images/Backdrop/0")
 }
 
-@Test func resolvesOriginalFilesForLibmpv() throws {
+@Test func resolvesOriginalFilesForNativePlayer() throws {
     let client = EmbyClient(account: account(host: "play.test"), identity: identity)
     let mp4 = PlaybackInfoResponse(mediaSources: [MediaSourceInfo(id: "ms1", container: "mp4", supportsDirectPlay: true)],
                                    playSessionId: "ps1")
-    let direct = try client.resolveStream(itemID: "i1", info: mp4, profile: .libmpv)
+    let direct = try client.resolveStream(itemID: "i1", info: mp4, profile: .native)
     #expect(direct.method == .directPlay)
     #expect(direct.url.path == "/Videos/i1/stream.mp4")
     let query = Set(direct.url.query!.split(separator: "&").map(String.init))
@@ -111,7 +111,7 @@ private func account(host: String) -> EmbyAccount {
         id: "ms2", container: "mkv", supportsDirectPlay: true, supportsDirectStream: true,
         transcodingUrl: "/videos/i2/master.m3u8?MediaSourceId=ms2&VideoCodec=h264&TranscodeReasons=ContainerNotSupported")],
                                    playSessionId: "ps2")
-    let directMKV = try client.resolveStream(itemID: "i2", info: mkv, profile: .libmpv)
+    let directMKV = try client.resolveStream(itemID: "i2", info: mkv, profile: .native)
     #expect(directMKV.method == .directPlay)
     #expect(directMKV.url.path == "/Videos/i2/stream.mkv")
 
@@ -124,13 +124,13 @@ private func account(host: String) -> EmbyAccount {
     #expect(EmbyClient.classify(transcodeQuery: reasons, source: mkv.mediaSources[0]) == .transcode)
 
     #expect(throws: EmbyError.noPlayableSource) {
-        try client.resolveStream(itemID: "x", info: PlaybackInfoResponse(mediaSources: []), profile: .libmpv)
+        try client.resolveStream(itemID: "x", info: PlaybackInfoResponse(mediaSources: []), profile: .native)
     }
 
     let conversionDisabled = PlaybackInfoResponse(mediaSources: [MediaSourceInfo(
         id: "ms3", container: "mkv", supportsDirectPlay: true, supportsDirectStream: true,
         supportsTranscoding: false)], playSessionId: "ps3")
-    let directWithoutServerConversion = try client.resolveStream(itemID: "i3", info: conversionDisabled, profile: .libmpv)
+    let directWithoutServerConversion = try client.resolveStream(itemID: "i3", info: conversionDisabled, profile: .native)
     #expect(directWithoutServerConversion.method == .directPlay)
 }
 

@@ -147,7 +147,7 @@ struct MainShell: View {
             if let server, parts.count > 1, let match = server.catalog.first(where: { $0.cardTitle.contains(parts[1]) }) {
                 var id = match.id
                 if match.kind == .series, let first = try? await server.client.episodes(of: match.id, season: nil).first { id = first.id }
-                let session = PlaybackSession(client: server.client, serverID: server.id, engine: MPVPlayerEngine())
+                let session = PlaybackSession(client: server.client, serverID: server.id, engine: try! NativePlayerEngine())
                 await session.play(itemID: id, resume: false)
                 let seconds = parts.count > 2 ? Int(parts[2]) ?? 120 : 120
                 var last = ""

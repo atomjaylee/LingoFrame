@@ -3,6 +3,7 @@ import CoreServices
 import DesignSystem
 import LearningCore
 import MediaServerKit
+import PlaybackKit
 import SwiftUI
 
 // 播放页的学习部分（设计稿「精听播放」）：画面上的双语字幕（单词可点查词）、查词卡片、右侧学习面板。
@@ -30,6 +31,11 @@ struct SubtitleOverlay: View {
                 .font(.system(size: 28, weight: .semibold))
                 .multilineTextAlignment(.center)
                 .blur(radius: mode == .blurPrimary ? 9 : 0)
+            } else if mode != .off, let native = session.engine.currentSubtitleText {
+                Text(native)
+                    .font(.system(size: 28, weight: .semibold))
+                    .multilineTextAlignment(.center)
+                    .blur(radius: mode == .blurPrimary ? 9 : 0)
             }
             if mode == .bilingual, let zh = session.currentSecondary {
                 Text(zh)
@@ -50,6 +56,34 @@ struct SubtitleOverlay: View {
     /// 去掉词两端的标点，保留词中间的撇号和连字符（I'm、well-known）。
     static func bare(_ word: String) -> String {
         word.trimmingCharacters(in: .punctuationCharacters.union(.symbols)).trimmingCharacters(in: CharacterSet(charactersIn: "‘’“”"))
+    }
+}
+
+/// 光盘位图字幕（PGS / DVB / DVD）按视频内容区域定位，不受控制条和窗口尺寸影响。
+struct BitmapSubtitleOverlay: View {
+    let engine: NativePlayerEngine
+
+    var body: some View {
+        GeometryReader { proxy in
+            let videoRect = fittedVideoRect(container: proxy.size, video: engine.presentationSize)
+            ForEach(engine.currentSubtitleImages) { subtitle in
+                let frame = subtitle.frame(in: videoRect)
+                Image(decorative: subtitle.cgImage, scale: 1)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
+            }
+        }
+    }
+
+    private func fittedVideoRect(container: CGSize, video: CGSize) -> CGRect {
+        guard video.width > 0, video.height > 0 else { return CGRect(origin: .zero, size: container) }
+        let scale = min(container.width / video.width, container.height / video.height)
+        let size = CGSize(width: video.width * scale, height: video.height * scale)
+        return CGRect(x: (container.width - size.width) / 2,
+                      y: (container.height - size.height) / 2,
+                      width: size.width, height: size.height)
     }
 }
 

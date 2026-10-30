@@ -42,9 +42,9 @@ public struct DeviceProfile: Codable, Sendable {
 }
 
 extension DeviceProfile {
-    /// libmpv 直接读取原文件，Emby 只提供地址，不参与转封装或转码。
-    public static let libmpv = DeviceProfile(
-        name: "ELEnglish libmpv",
+    /// 原生播放管线直接读取原文件，Emby 只提供地址，不参与转码。
+    public static let native = DeviceProfile(
+        name: "ELEnglish Native",
         maxStreamingBitrate: 1_000_000_000,
         maxStaticBitrate: 1_000_000_000,
         musicStreamingTranscodingBitrate: 384_000,
@@ -56,4 +56,5 @@ extension DeviceProfile {
         transcodingProfiles: [],
         subtitleProfiles: ["srt", "subrip", "ass", "ssa", "vtt", "pgssub", "dvdsub"]
             .map { SubtitleProfile(format: $0, method: "External") })
+
 }

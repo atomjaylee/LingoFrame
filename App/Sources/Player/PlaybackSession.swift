@@ -36,7 +36,7 @@ private actor SubtitleCueCache {
 @MainActor
 @Observable
 final class PlaybackSession {
-    let engine: MPVPlayerEngine
+    let engine: NativePlayerEngine
     let client: EmbyClient?
     let serverID: String?
 
@@ -84,10 +84,10 @@ final class PlaybackSession {
     @ObservationIgnored private var lastRequest: PlayRequest?
     @ObservationIgnored private var loadGeneration: UInt64 = 0
     @ObservationIgnored private var jumpGeneration: UInt64 = 0
-    private let profile = DeviceProfile.libmpv
+    private let profile = DeviceProfile.native
     private let log = Logger(subsystem: "app.elenglish", category: "session")
 
-    init(client: EmbyClient?, serverID: String?, engine: MPVPlayerEngine) {
+    init(client: EmbyClient?, serverID: String?, engine: NativePlayerEngine) {
         self.client = client
         self.serverID = serverID
         self.engine = engine
@@ -130,7 +130,12 @@ final class PlaybackSession {
             guard generation == loadGeneration else { return }
             errorMessage = nil
             localURL = url
-            engine.load(url: url)
+            do {
+                try await engine.load(url: url)
+            } catch {
+                guard generation == loadGeneration else { return }
+                errorMessage = error.localizedDescription
+            }
         case .emby(_, let id, let resume):
             if let prepared, prepared.item.id == id {
                 await play(prepared: prepared, resume: resume)
@@ -174,10 +179,9 @@ final class PlaybackSession {
             let stream = try client.resolveOriginalStream(itemID: itemID, info: info)
             self.stream = stream
             loadSubtitles(itemID: item.id, source: stream.mediaSource)
-            playMode = "libmpv 直读原文件"
-            log.info("播放 \(itemID, privacy: .public) 路线 libmpv 原文件")
-            engine.load(url: stream.url, startAt: start, durationHint: durationHint,
-                        cachedSource: cachedSource(itemID: item.id, stream: stream))
+            playMode = "Apple 原生显示管线"
+            log.info("播放 \(itemID, privacy: .public) 路线 Apple 原生显示")
+            try await engine.load(url: stream.url, id: item.id, startAt: start, durationHint: durationHint)
             startReporting(generation: generation)
             if item.kind == .episode, let seriesID = item.seriesId {
                 let loaded = (try? await client.episodes(of: seriesID, season: item.seasonId)) ?? []
@@ -203,7 +207,7 @@ final class PlaybackSession {
             return
         }
         let generation = beginLoad()
-        finishCurrent(preserveEngine: true)
+        finishCurrent()
         guard generation == loadGeneration else { return }
         errorMessage = nil
         lastRequest = .emby(serverID: prepared.serverID, itemID: prepared.item.id, resume: resume)
@@ -211,10 +215,14 @@ final class PlaybackSession {
         stream = prepared.stream
         let start = resume ? prepared.startAt : nil
         loadSubtitles(itemID: prepared.item.id, source: prepared.stream.mediaSource)
-        playMode = "libmpv 详情页预热"
-        if !engine.activatePreloaded(url: prepared.stream.url) || start != prepared.startAt {
-            engine.load(url: prepared.stream.url, startAt: start, durationHint: durationHint,
-                        cachedSource: cachedSource(itemID: prepared.item.id, stream: prepared.stream))
+        playMode = "Apple 原生显示管线（已预热）"
+        do {
+            try await engine.load(url: prepared.stream.url, id: prepared.item.id,
+                                  startAt: start, durationHint: durationHint)
+        } catch {
+            guard generation == loadGeneration else { return }
+            errorMessage = error.localizedDescription
+            return
         }
         startReporting(generation: generation)
         if prepared.item.kind == .episode, let seriesID = prepared.item.seriesId {
@@ -240,15 +248,6 @@ final class PlaybackSession {
             ?? source.audioStreams.first
     }
 
-    private func cachedSource(itemID: String, stream: ResolvedStream) -> CachedMediaSource {
-        CachedMediaSource(
-            cacheKey: [serverID ?? "local", itemID, stream.mediaSource.id, stream.mediaSource.size.map(String.init) ?? "unknown"]
-                .joined(separator: "|"),
-            url: stream.url,
-            size: stream.mediaSource.size,
-            fileExtension: stream.mediaSource.container)
-    }
-
     /// 关闭窗口时调用：上报停止、停掉服务器转码、释放播放器。
     func close() {
         _ = beginLoad()
@@ -265,12 +264,12 @@ final class PlaybackSession {
         if let stopped { Task { await transmit(stopped, as: .stopped) } }
     }
 
-    private func finishCurrent(preserveEngine: Bool = false) {
+    private func finishCurrent() {
         reporter?.cancel()
         reporter = nil
         let stopped = reportedStart ? makeReport(.stopped) : nil
         reportedStart = false
-        if !preserveEngine { engine.stop() }
+        engine.stop()
         item = nil
         siblings = []
         stream = nil
@@ -291,7 +290,7 @@ final class PlaybackSession {
 
     // MARK: 字幕
 
-    /// 自动挑字幕：文本字幕由 Emby 在后台导出，不阻塞 libmpv 首帧；图形字幕交给 mpv 播放但不参与逐句学习。
+    /// 自动挑字幕：文本字幕由 Emby 在后台导出，不阻塞首帧；图形字幕由原生播放层显示但不参与逐句学习。
     private func loadSubtitles(itemID: String, source: MediaSourceInfo) {
         engine.setNativeSubtitlesVisible(true)
         let options = Self.textSubtitleOptions(from: source)

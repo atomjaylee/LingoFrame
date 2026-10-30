@@ -29,7 +29,7 @@ enum PlaybackProbe {
         let out = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("playtest.txt")
         var lines: [String] = []
         for item in targets {
-            let session = PlaybackSession(client: server.client, serverID: server.id, engine: MPVPlayerEngine())
+            let session = PlaybackSession(client: server.client, serverID: server.id, engine: try! NativePlayerEngine())
             let started = ContinuousClock.now
             await session.play(itemID: item.id, resume: resumeOnly)
             var result = "超时"
@@ -78,7 +78,7 @@ enum PlaybackProbe {
             NSLog("switchtest 没有可用的两集")
             return
         }
-        let engine = MPVPlayerEngine()
+        let engine = try! NativePlayerEngine()
         let session = PlaybackSession(client: server.client, serverID: server.id, engine: engine)
         let first = Task { await session.play(itemID: episodes[0].id, resume: false) }
         try? await Task.sleep(for: .milliseconds(30))

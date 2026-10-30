@@ -7,13 +7,17 @@ let package = Package(
     products: [.library(name: "PlaybackKit", targets: ["PlaybackKit"])],
     dependencies: [
         .package(path: "../LearningCore"),
-        .package(url: "https://github.com/kingslay/FFmpegKit.git", from: "9.0.2"),
+        .package(path: "../PlaybackCore"),
+        .package(url: "https://github.com/superuser404notfound/AetherEngine.git", exact: "7.52.0"),
     ],
     targets: [
-        .target(name: "PlaybackKit", dependencies: [
+        .target(name: "PlaybackNative", dependencies: [
             "LearningCore",
-            .product(name: "libmpv", package: "FFmpegKit"),
-        ]),
+            "PlaybackCore",
+            .product(name: "AetherEngine", package: "AetherEngine"),
+        ], path: "Sources/PlaybackNative"),
+        .target(name: "PlaybackKit", dependencies: ["PlaybackCore", "PlaybackNative"],
+                path: "Sources/PlaybackKitFacade"),
         .testTarget(name: "PlaybackKitTests", dependencies: ["PlaybackKit"]),
     ]
 )

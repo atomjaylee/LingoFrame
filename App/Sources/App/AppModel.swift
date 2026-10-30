@@ -65,7 +65,7 @@ struct LibraryMatch: Hashable {
     var item: EmbyItem
 }
 
-/// 详情页提前准备好的播放会话。真正播放时复用同一个 libmpv 实例，不再重复请求和探测文件。
+/// 详情页提前准备好的播放会话。真正播放时复用片源信息和预热字节。
 struct PreparedPlayback {
     var serverID: String
     var item: EmbyItem
@@ -77,8 +77,8 @@ struct PreparedPlayback {
 @Observable
 final class AppModel {
     let identity: ClientIdentity
-    /// 全 App 唯一的播放内核；详情页预热与播放窗口复用同一个 libmpv 实例。
-    let playbackEngine = MPVPlayerEngine()
+    /// 全 App 唯一的播放内核；窗口切换和换片不重建原生显示管线。
+    let playbackEngine = try! NativePlayerEngine()
     let themeStore = ThemeStore()
     let layoutStore: LayoutStore
     let panels = PanelRegistry()
@@ -96,7 +96,7 @@ final class AppModel {
     }
     /// 最近激活的播放会话，独立窗口里的面板通过它拿到播放数据。
     var activeSession: PlaybackSession?
-    /// 单播放窗口当前要加载的请求；新请求复用同一个窗口和同一个 libmpv 内核。
+    /// 单播放窗口当前要加载的请求；新请求复用同一个窗口和同一个播放内核。
     var playRequest: PlayRequest?
     var playRequestRevision: UInt64 = 0
     @ObservationIgnored private var preparedPlayback: PreparedPlayback?
@@ -163,34 +163,26 @@ final class AppModel {
         return servers.first { $0.id == id }
     }
 
-    /// 详情页后台预热：并行读取条目和播放信息，然后让唯一的 libmpv 内核暂停在首帧。
+    /// 详情页后台预热：并行读取条目和播放信息，并预取片源开头字节。
     func preparePlayback(serverID: String, itemID: String) async {
         guard activeSession == nil, let client = server(serverID)?.client else { return }
         preparationGeneration &+= 1
         let generation = preparationGeneration
         do {
             async let itemRequest = client.item(itemID)
-            async let infoRequest = client.playbackInfo(itemID: itemID, profile: .libmpv)
+            async let infoRequest = client.playbackInfo(itemID: itemID, profile: .native)
             let (item, info) = try await (itemRequest, infoRequest)
             try Task.checkCancellation()
             guard activeSession == nil, generation == preparationGeneration else { return }
             let stream = try client.resolveOriginalStream(itemID: itemID, info: info)
             let start = item.resumePositionSeconds
-            let duration = item.runTimeTicks.map { Double($0) / 10_000_000 }
             preparedPlayback = PreparedPlayback(serverID: serverID, item: item, stream: stream, startAt: start)
-            let cachedSource = CachedMediaSource(
-                cacheKey: [serverID, item.id, stream.mediaSource.id, stream.mediaSource.size.map(String.init) ?? "unknown"]
-                    .joined(separator: "|"),
-                url: stream.url,
-                size: stream.mediaSource.size,
-                fileExtension: stream.mediaSource.container)
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, generation == self.preparationGeneration, self.activeSession == nil else { return }
                 await PlaybackSession.prefetchSubtitles(client: client, itemID: item.id, source: stream.mediaSource)
             }
-            playbackEngine.load(url: stream.url, startAt: start, autoplay: false, durationHint: duration,
-                                preload: true, cachedSource: cachedSource)
+            await NativePlayerEngine.prewarm(url: stream.url)
         } catch is CancellationError {
             return
         } catch {

@@ -209,6 +209,8 @@ private struct PlayerScreen: View {
                         _ = PlayerCommands.perform(command, session: session, window: window)
                     }
                 })
+            BitmapSubtitleOverlay(engine: session.engine)
+                .allowsHitTesting(false)
             StatusOverlay(session: session)
             if let hud = session.hud {
                 Text(hud)
@@ -398,7 +400,7 @@ private struct ControlBar: View {
     let window: NSWindow?
     @Environment(\.openWindow) private var openWindow
 
-    private var engine: MPVPlayerEngine { session.engine }
+    private var engine: NativePlayerEngine { session.engine }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -615,7 +617,7 @@ struct SubtitleTrackMenus: View {
 
 /// 进度条：两端圆的胶囊，悬停时加粗并显示拖动点。播放时间每 0.5 秒变一次，只让这个小视图刷新。
 private struct Scrubber: View {
-    let engine: MPVPlayerEngine
+    let engine: NativePlayerEngine
     @Binding var isScrubbing: Bool
     @State private var dragValue: Double = 0
     @Environment(\.theme) private var theme
@@ -627,8 +629,8 @@ private struct Scrubber: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(.white.opacity(0.18)).frame(height: 4)
                 ForEach(engine.bufferedRanges, id: \.self) { range in
-                    let start = min(max(range.start.seconds / duration, 0), 1)
-                    let end = min(max(range.end.seconds / duration, start), 1)
+                    let start = min(max(range.lowerBound / duration, 0), 1)
+                    let end = min(max(range.upperBound / duration, start), 1)
                     Capsule().fill(.white.opacity(0.72))
                         .frame(width: geo.size.width * (end - start), height: 4)
                         .offset(x: geo.size.width * start)
@@ -663,13 +665,13 @@ private struct Scrubber: View {
 
     private var cachedRangeDescription: String {
         engine.bufferedRanges.isEmpty ? "暂无可快速跳转的缓存" : engine.bufferedRanges.map {
-            "缓存 \(TimeFormat.clock($0.start.seconds)) 至 \(TimeFormat.clock($0.end.seconds))"
+            "缓存 \(TimeFormat.clock($0.lowerBound)) 至 \(TimeFormat.clock($0.upperBound))"
         }.joined(separator: "，")
     }
 }
 
 private struct TimeText: View {
-    let engine: MPVPlayerEngine
+    let engine: NativePlayerEngine
     let remaining: Bool
 
     var body: some View {
