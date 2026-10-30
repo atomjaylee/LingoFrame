@@ -592,8 +592,7 @@ private struct ControlBar: View {
             set: { if let id = $0 { engine.selectAudio(id) } }
         )) {
             ForEach(engine.audioOptions) { option in
-                Text(option.title + (option.id == engine.selectedAudioID ? "（使用中）" : ""))
-                    .tag(Optional(option.id))
+                Text(option.title).tag(Optional(option.id))
             }
         }
         .pickerStyle(.inline)
@@ -622,10 +621,9 @@ private struct ControlBar: View {
             get: { currentSubtitleID },
             set: { session.selectPlaybackSubtitle($0) }
         )) {
-            Text(currentSubtitleID == nil ? "关闭（当前）" : "关闭").tag(nil as Int?)
+            Text("关闭").tag(nil as Int?)
             ForEach(engine.subtitleOptions) { option in
-                Text(option.title + (option.id == currentSubtitleID ? "（使用中）" : ""))
-                    .tag(Optional(option.id))
+                Text(option.title).tag(Optional(option.id))
             }
         }
         .pickerStyle(.inline)
