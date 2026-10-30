@@ -10,8 +10,10 @@ final class PlayerWindowController: NSObject, NSWindowDelegate {
     static let shared = PlayerWindowController()
     private var window: NSWindow?
     private var frameAspectRatio: Double?
+    private weak var model: AppModel?
 
     func show(model: AppModel) {
+        self.model = model
         if window == nil {
             let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
             let size = NSSize(width: min(1440, screen.width), height: min(900, screen.height))
@@ -29,11 +31,13 @@ final class PlayerWindowController: NSObject, NSWindowDelegate {
             window.minSize = NSSize(width: 720, height: 332)
             window.collectionBehavior.insert(.fullScreenPrimary)
             window.delegate = self
-            window.contentViewController = NSHostingController(
-                rootView: AnyView(PlayerWindowHost().ignoresSafeArea().appEnvironment(model))
-            )
             window.center()
             self.window = window
+        }
+        if window?.contentViewController == nil {
+            window?.contentViewController = NSHostingController(
+                rootView: AnyView(PlayerWindowHost().ignoresSafeArea().appEnvironment(model))
+            )
         }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -41,6 +45,15 @@ final class PlayerWindowController: NSObject, NSWindowDelegate {
 
     func setAspectRatio(_ size: CGSize) {
         frameAspectRatio = size.width > 0 && size.height > 0 ? size.width / size.height : nil
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closing = notification.object as? NSWindow, closing === window else { return }
+        // 原生窗口关闭不会销毁托管视图；主动结束会话并移除旧视图，重开时重新执行加载任务。
+        model?.activeSession?.close()
+        model?.activeSession = nil
+        closing.contentViewController = nil
+        frameAspectRatio = nil
     }
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
@@ -74,7 +87,7 @@ struct PlayerWindow: View {
         }
         .frame(minWidth: 720, minHeight: 332)
         .task(id: requestRevision) {
-            guard let request else { return }
+            guard !Task.isCancelled, let request else { return }
             let serverID = request.serverID
             let prepared: PreparedPlayback? = if case .emby(let serverID, let itemID, let resume) = request {
                 model.takePreparedPlayback(serverID: serverID, itemID: itemID, resume: resume)
@@ -94,9 +107,9 @@ struct PlayerWindow: View {
             await s.start(request, prepared: prepared)
         }
         .onDisappear {
-            guard let s = session else { return }
+            guard let s = session, model.activeSession === s else { return }
             s.close()
-            if model.activeSession === s { model.activeSession = nil }
+            model.activeSession = nil
         }
     }
 }
@@ -128,6 +141,10 @@ private struct PlayerScreen: View {
         ZStack {
             Color.black
             PlayerSurface(engine: session.engine)
+            if session.engine.state == .idle
+                || (session.engine.state == .loading && session.engine.presentationSize == .zero) {
+                Color.black
+            }
             stage
         }
         .background(Color.black)
