@@ -628,12 +628,14 @@ private struct Scrubber: View {
         GeometryReader { geo in
             let duration = max(engine.duration, 1)
             let played = min(max((isScrubbing ? dragValue : engine.currentTime) / duration, 0), 1)
-            let buffered = min(max(engine.bufferedTime / duration, played), 1)
             ZStack(alignment: .leading) {
                 Capsule().fill(.white.opacity(0.18)).frame(height: 4)
-                if buffered > 0 {
+                ForEach(engine.bufferedRanges, id: \.self) { range in
+                    let start = min(max(range.start.seconds / duration, 0), 1)
+                    let end = min(max(range.end.seconds / duration, start), 1)
                     Capsule().fill(.white.opacity(0.72))
-                        .frame(width: max(4, geo.size.width * buffered), height: 4)
+                        .frame(width: geo.size.width * (end - start), height: 4)
+                        .offset(x: geo.size.width * start)
                 }
                 if played > 0 {
                     Capsule().fill(theme.colors.accentAmber.color)
@@ -660,7 +662,13 @@ private struct Scrubber: View {
         .disabled(engine.duration <= 0)
         .accessibilityElement()
         .accessibilityLabel("播放进度")
-        .accessibilityValue("\(TimeFormat.clock(engine.currentTime)) / \(TimeFormat.clock(engine.duration))，缓存至 \(TimeFormat.clock(engine.bufferedTime))")
+        .accessibilityValue("\(TimeFormat.clock(engine.currentTime)) / \(TimeFormat.clock(engine.duration))，\(cachedRangeDescription)")
+    }
+
+    private var cachedRangeDescription: String {
+        engine.bufferedRanges.isEmpty ? "暂无可快速跳转的缓存" : engine.bufferedRanges.map {
+            "缓存 \(TimeFormat.clock($0.start.seconds)) 至 \(TimeFormat.clock($0.end.seconds))"
+        }.joined(separator: "，")
     }
 }
 

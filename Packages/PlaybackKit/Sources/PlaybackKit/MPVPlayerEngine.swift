@@ -88,6 +88,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     public private(set) var currentTime: Double = 0
     public private(set) var duration: Double = 0
     public private(set) var bufferedTime: Double = 0
+    public private(set) var bufferedRanges: [TimeRange] = []
     public private(set) var presentationSize: CGSize = .zero
     public private(set) var audioOptions: [TrackOption] = []
     public private(set) var selectedAudioID: Int?
@@ -118,10 +119,9 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
     @ObservationIgnored private var segmentGeneration: UInt64 = 0
     @ObservationIgnored private var lastError: String?
     @ObservationIgnored private var loadedURL: URL?
-    @ObservationIgnored private var observedTime: Double = 0
     @ObservationIgnored private let headless: Bool
     @ObservationIgnored private var didAutoSelectSubtitle = false
-    @ObservationIgnored private var hasAbsoluteCacheTime = false
+    @ObservationIgnored private var playbackRestartCount: UInt64 = 0
     @ObservationIgnored private var mediaGeneration: UInt64 = 0
     @ObservationIgnored private var videoRecoveryTask: Task<Void, Never>?
     @ObservationIgnored private var needsVideoReloadOnAttach = false
@@ -160,9 +160,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         seekGeneration &+= 1
         state = .loading
         currentTime = startAt ?? 0
-        observedTime = currentTime
         bufferedTime = currentTime
-        hasAbsoluteCacheTime = false
+        bufferedRanges = []
         duration = durationHint ?? 0
         presentationSize = .zero
         audioOptions = []
@@ -213,8 +212,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         needsVideoReloadOnAttach = false
         fileIsLoaded = false
         currentTime = 0
-        observedTime = 0
         bufferedTime = 0
+        bufferedRanges = []
         duration = 0
         state = .idle
     }
@@ -258,12 +257,14 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         let target = max(0, duration > 0 ? min(seconds, duration) : seconds)
         seekGeneration &+= 1
         let generation = seekGeneration
-        guard command("seek", [String(format: "%.3f", target), exact ? "absolute+exact" : "absolute"]) >= 0 else { return }
+        let restartCount = playbackRestartCount
+        // 进度条优先快速出画面；字幕、单句循环才需要从关键帧逐帧解码到精确位置。
+        guard command("seek", [String(format: "%.3f", target), exact ? "absolute+exact" : "absolute+keyframes"]) >= 0 else { return }
 
         let deadline = ContinuousClock.now + .seconds(5)
-        let tolerance = exact ? 0.18 : 0.8
-        while generation == seekGeneration, ContinuousClock.now < deadline {
-            if abs(observedTime - target) <= tolerance, !getFlag("seeking") { return }
+        while generation == seekGeneration, !Task.isCancelled, ContinuousClock.now < deadline {
+            // 快速跳转的落点可能离点击处几秒远，按内核的实际完成事件结束等待。
+            if playbackRestartCount != restartCount, !getFlag("seeking") { return }
             try? await Task.sleep(for: .milliseconds(20))
         }
     }
@@ -399,8 +400,7 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         observe("dheight", MPV_FORMAT_INT64)
         observe("track-list", MPV_FORMAT_NONE)
         observe("hwdec-current", MPV_FORMAT_STRING)
-        observe("demuxer-cache-time", MPV_FORMAT_DOUBLE)
-        observe("demuxer-cache-duration", MPV_FORMAT_DOUBLE)
+        observe("demuxer-cache-state", MPV_FORMAT_NODE)
         observe("vo-configured", MPV_FORMAT_FLAG)
     }
 
@@ -432,6 +432,8 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
             switch event.pointee.event_id {
             case MPV_EVENT_FILE_LOADED:
                 fileLoaded()
+            case MPV_EVENT_PLAYBACK_RESTART:
+                playbackRestartCount &+= 1
             case MPV_EVENT_PROPERTY_CHANGE:
                 propertyChanged(event.pointee.data)
             case MPV_EVENT_END_FILE:
@@ -483,7 +485,6 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
         switch name {
         case "time-pos":
             if let value = property.data?.assumingMemoryBound(to: Double.self).pointee, value.isFinite {
-                observedTime = value
                 currentTime = value
                 if bufferedTime < value { bufferedTime = value }
             }
@@ -500,19 +501,38 @@ public final class MPVPlayerEngine: SegmentPlayer, @unchecked Sendable {
             if flag(from: property.data) == true, state != .loading, loadedURL != nil { state = .ended }
         case "width", "height", "dwidth", "dheight", "track-list", "hwdec-current":
             reloadPresentationInfo()
-        case "demuxer-cache-time":
-            if let value = property.data?.assumingMemoryBound(to: Double.self).pointee, value.isFinite {
-                hasAbsoluteCacheTime = true
-                bufferedTime = min(duration > 0 ? duration : value, max(currentTime, value))
-            }
-        case "demuxer-cache-duration":
-            if !hasAbsoluteCacheTime,
-               let value = property.data?.assumingMemoryBound(to: Double.self).pointee, value.isFinite {
-                bufferedTime = min(duration > 0 ? duration : currentTime + value, currentTime + max(0, value))
-            }
+        case "demuxer-cache-state":
+            updateBufferedRanges(property.data)
         default:
             break
         }
+    }
+
+    private func updateBufferedRanges(_ data: UnsafeMutableRawPointer?) {
+        var ranges: [TimeRange] = []
+        if let cache = data?.assumingMemoryBound(to: mpv_node.self).pointee,
+           let entries = node(cache, key: "seekable-ranges"), entries.format == MPV_FORMAT_NODE_ARRAY,
+           let list = entries.u.list?.pointee, let values = list.values {
+            for index in 0..<Int(list.num) {
+                guard let start = node(values[index], key: "start"), start.format == MPV_FORMAT_DOUBLE,
+                      let end = node(values[index], key: "end"), end.format == MPV_FORMAT_DOUBLE,
+                      start.u.double_.isFinite, end.u.double_.isFinite else { continue }
+                let lower = max(0, start.u.double_)
+                let upper = duration > 0 ? min(duration, end.u.double_) : end.u.double_
+                guard upper > lower else { continue }
+                ranges.append(TimeRange(start: MediaTime(seconds: lower), end: MediaTime(seconds: upper)))
+            }
+        }
+        var merged: [TimeRange] = []
+        for range in ranges.sorted(by: { $0.start < $1.start }) {
+            if let last = merged.last, range.start <= last.end {
+                merged[merged.count - 1].end = max(last.end, range.end)
+            } else {
+                merged.append(range)
+            }
+        }
+        bufferedRanges = merged
+        bufferedTime = max(currentTime, merged.last?.end.seconds ?? currentTime)
     }
 
     private func endFile(_ data: UnsafeMutableRawPointer?) {
