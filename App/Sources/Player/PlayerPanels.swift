@@ -31,15 +31,23 @@ private struct TranscriptFloatingPanel: View {
                 LearningPanel(session: session) {
                     dismissWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                 }
-                .background(WindowAccessor { position($0, beside: session.windowTitle) })
+                .background(WindowAccessor { configure($0, beside: session.windowTitle) })
             } else {
                 NoSessionView()
             }
         }
     }
 
-    private func position(_ panel: NSWindow?, beside playerTitle: String) {
-        guard !positioned, let panel,
+    private func configure(_ panel: NSWindow?, beside playerTitle: String) {
+        guard let panel else { return }
+        panel.titleVisibility = .hidden
+        panel.styleMask = [.borderless, .resizable]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isMovableByWindowBackground = true
+
+        guard !positioned,
               let player = NSApp.windows.first(where: { $0 !== panel && $0.title == playerTitle }),
               let visible = player.screen?.visibleFrame else { return }
         positioned = true
