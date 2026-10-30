@@ -598,6 +598,41 @@ private struct TranscriptList: View {
     }
 }
 
+/// 分集列表共用每集自己的剧照，并在图上保留播放状态和进度。
+struct EpisodeArtwork: View {
+    let episode: EmbyItem
+    let client: EmbyClient?
+    let isCurrent: Bool
+
+    var body: some View {
+        let url = client?.imageURL(for: episode, type: .primary, maxWidth: 320)
+        RemoteImage(url: url, maxPixelSize: 320)
+            .frame(width: 112, height: 63)
+            .overlay {
+                if url == nil {
+                    Image(systemName: "film").font(.system(size: 20)).foregroundStyle(.secondary)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if isCurrent || episode.isPlayed {
+                    Image(systemName: isCurrent ? "speaker.wave.2.fill" : "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(isCurrent ? Color(red: 1, green: 0.68, blue: 0.03) : .white)
+                        .padding(5)
+                        .background(.black.opacity(0.65), in: Circle())
+                        .padding(4)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if let progress = episode.progress, progress > 0, !episode.isPlayed {
+                    ProgressCapsule(value: progress, height: 2).padding(5)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
 private struct EpisodeList: View {
     let session: PlaybackSession
 
@@ -611,10 +646,8 @@ private struct EpisodeList: View {
                             if !isCurrent { Task { await session.play(itemID: ep.id, resume: true) } }
                         } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: isCurrent ? "speaker.wave.2.fill" : (ep.isPlayed ? "checkmark.circle" : "circle"))
-                                    .foregroundStyle(isCurrent ? Color(red: 1, green: 0.68, blue: 0.03) : .secondary)
-                                    .frame(width: 18)
-                                VStack(alignment: .leading, spacing: 0) {
+                                EpisodeArtwork(episode: ep, client: session.client, isCurrent: isCurrent)
+                                VStack(alignment: .leading, spacing: 4) {
                                     Text(ep.episodeCode ?? "").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                                     Text(ep.displayName).font(.system(size: 14, weight: isCurrent ? .semibold : .regular)).lineLimit(2)
                                 }

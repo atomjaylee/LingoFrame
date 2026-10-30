@@ -147,10 +147,8 @@ private struct EpisodesPanel: View {
             if !isCurrent { Task { await session.play(itemID: ep.id, resume: true) } }
         } label: {
             HStack(spacing: theme.metrics.space(3)) {
-                Image(systemName: isCurrent ? "speaker.wave.2.fill" : (ep.isPlayed ? "checkmark.circle" : "circle"))
-                    .foregroundStyle(isCurrent ? theme.colors.accentAmber.color : theme.colors.inkMuted.color)
-                    .frame(width: 18)
-                VStack(alignment: .leading, spacing: 0) {
+                EpisodeArtwork(episode: ep, client: session.client, isCurrent: isCurrent)
+                VStack(alignment: .leading, spacing: 4) {
                     Text(ep.episodeCode ?? "").themedFont(.caption).foregroundStyle(theme.colors.inkMuted.color)
                     Text(ep.displayName).themedFont(.body, weight: isCurrent ? .semibold : .regular).lineLimit(2)
                 }
