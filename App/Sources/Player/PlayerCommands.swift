@@ -10,16 +10,24 @@ enum PlayerCommands {
     static let toggleMute: CommandID = "playback.toggle-mute"
     static let seekForward: CommandID = "playback.seek-forward"
     static let seekBackward: CommandID = "playback.seek-backward"
+    static let revealControls: CommandID = "playback.reveal-controls"
+    static let toggleFullScreen: CommandID = "window.toggle-fullscreen"
     static let exitFullScreen: CommandID = "window.exit-fullscreen"
 
-    static let extraBindings = Bindings(keys: [
-        KeyBinding(KeyChord("up"), volumeUp),
-        KeyBinding(KeyChord("down"), volumeDown),
-        KeyBinding(KeyChord("m"), toggleMute),
-        KeyBinding(KeyChord("right", .shift), seekForward),
-        KeyBinding(KeyChord("left", .shift), seekBackward),
-        KeyBinding(KeyChord("escape"), exitFullScreen),
-    ])
+    static let extraBindings = Bindings(
+        gestures: [
+            GestureBinding(.video, Gesture(.click), revealControls),
+            GestureBinding(.video, Gesture(.doubleClick), .togglePlay),
+        ],
+        keys: [
+            KeyBinding(KeyChord("up"), volumeUp),
+            KeyBinding(KeyChord("down"), volumeDown),
+            KeyBinding(KeyChord("m"), toggleMute),
+            KeyBinding(KeyChord("right", .shift), seekForward),
+            KeyBinding(KeyChord("left", .shift), seekBackward),
+            KeyBinding(KeyChord("return"), toggleFullScreen),
+            KeyBinding(KeyChord("escape"), exitFullScreen),
+        ])
 
     /// 执行命令；返回 false 表示这个命令播放器不处理（按键交还给系统）。
     /// 没有字幕时，「上一句 / 下一句 / 重播」退化为后退、前进 5 秒。
@@ -37,6 +45,10 @@ enum PlayerCommands {
         case volumeUp: session.changeVolume(by: 0.1)
         case volumeDown: session.changeVolume(by: -0.1)
         case toggleMute: session.toggleMute()
+        case revealControls: break
+        case toggleFullScreen:
+            guard let window else { return false }
+            window.toggleFullScreen(nil)
         case exitFullScreen:
             guard let window, window.styleMask.contains(.fullScreen) else { return false }
             window.toggleFullScreen(nil)

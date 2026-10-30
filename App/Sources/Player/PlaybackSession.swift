@@ -32,6 +32,12 @@ private actor SubtitleCueCache {
     }
 }
 
+struct SeekFeedback: Equatable {
+    enum Direction: Equatable { case backward, forward }
+    var direction: Direction
+    var seconds: Int
+}
+
 /// 一个播放窗口的会话：把 Emby 条目解析成播放地址，交给播放内核，并向 Emby 上报播放进度。
 @MainActor
 @Observable
@@ -75,11 +81,14 @@ final class PlaybackSession {
     @ObservationIgnored private var pausedAfterLine: Int?
     /// 快捷键操作的短暂提示，比如「速度 0.75×」。
     private(set) var hud: String?
+    /// 快进快退使用画面左右两侧的独立反馈，不和普通状态提示混在一起。
+    private(set) var seekFeedback: SeekFeedback?
 
     @ObservationIgnored private var reporter: Task<Void, Never>?
     @ObservationIgnored private var subtitleTask: Task<Void, Never>?
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var hudTask: Task<Void, Never>?
+    @ObservationIgnored private var seekFeedbackTask: Task<Void, Never>?
     @ObservationIgnored private var reportedStart = false
     @ObservationIgnored private var lastRequest: PlayRequest?
     @ObservationIgnored private var loadGeneration: UInt64 = 0
@@ -292,8 +301,11 @@ final class PlaybackSession {
         subtitleTask?.cancel()
         ticker?.cancel()
         nextPreparationTask?.cancel()
+        seekFeedbackTask?.cancel()
         nextPreparationTask = nil
+        seekFeedbackTask = nil
         preparedNext = nil
+        seekFeedback = nil
         ticker = nil
         currentLine = nil
         currentSecondary = nil
@@ -566,7 +578,20 @@ final class PlaybackSession {
 
     func seek(by seconds: Double) {
         engine.skip(by: seconds)
-        flash(seconds < 0 ? "⏪ \(Int(-seconds)) 秒" : "⏩ \(Int(seconds)) 秒")
+        let direction: SeekFeedback.Direction = seconds < 0 ? .backward : .forward
+        let amount = max(1, Int(abs(seconds).rounded()))
+        if let current = seekFeedback, current.direction == direction {
+            seekFeedback = SeekFeedback(direction: direction, seconds: current.seconds + amount)
+        } else {
+            seekFeedback = SeekFeedback(direction: direction, seconds: amount)
+        }
+        seekFeedbackTask?.cancel()
+        seekFeedbackTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(850))
+            guard !Task.isCancelled else { return }
+            self?.seekFeedback = nil
+            self?.seekFeedbackTask = nil
+        }
     }
 
     static let rateSteps: [Double] = [0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]

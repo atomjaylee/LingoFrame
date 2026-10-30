@@ -202,11 +202,17 @@ private struct PlayerScreen: View {
 
     private var stage: some View {
         ZStack {
-            // 单击 / 双击只作用在画面空白处：按钮、单词、查词卡各自处理点击，不会连带触发暂停。
+            // 单击只唤出控制栏，双击播放/暂停；按钮、字幕单词和查词卡自己处理点击。
             Color.clear
                 .contentShape(Rectangle())
-                .gesture(TapGesture(count: 2).onEnded { window?.toggleFullScreen(nil) })
+                .gesture(TapGesture(count: 2).onEnded {
+                    poke()
+                    if let command = model.bindings.command(for: Gesture(.doubleClick), on: .video) {
+                        _ = PlayerCommands.perform(command, session: session, window: window)
+                    }
+                })
                 .simultaneousGesture(TapGesture().onEnded {
+                    poke()
                     if lookup != nil { lookup = nil; return }
                     if let command = model.bindings.command(for: Gesture(.click), on: .video) {
                         _ = PlayerCommands.perform(command, session: session, window: window)
@@ -215,6 +221,11 @@ private struct PlayerScreen: View {
             BitmapSubtitleOverlay(engine: session.engine)
                 .allowsHitTesting(false)
             StatusOverlay(session: session)
+            if let feedback = session.seekFeedback {
+                SeekFeedbackOverlay(feedback: feedback)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    .allowsHitTesting(false)
+            }
             if let hud = session.hud {
                 Text(hud)
                     .font(.system(size: 15, weight: .semibold))
@@ -269,6 +280,7 @@ private struct PlayerScreen: View {
         .foregroundStyle(.white)
         .animation(.easeOut(duration: 0.16), value: controlsVisible)
         .animation(.easeOut(duration: 0.15), value: session.hud)
+        .animation(.easeOut(duration: 0.15), value: session.seekFeedback)
         .animation(.easeOut(duration: 0.15), value: lookup)
         .contentShape(Rectangle())
         .onContinuousHover { phase in
@@ -304,6 +316,35 @@ private struct PlayerScreen: View {
                 controlsVisible = false
             }
         }
+    }
+}
+
+private struct SeekFeedbackOverlay: View {
+    let feedback: SeekFeedback
+
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 7) {
+                Image(systemName: symbolName)
+                    .font(.system(size: 30, weight: .medium))
+                Text(feedback.direction == .forward ? "前进 \(feedback.seconds) 秒" : "后退 \(feedback.seconds) 秒")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .frame(width: 128, height: 88)
+            .background(.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(.white.opacity(0.14), lineWidth: 1))
+            .shadow(color: .black.opacity(0.32), radius: 12, y: 5)
+            .position(x: geometry.size.width * (feedback.direction == .forward ? 0.72 : 0.28),
+                      y: geometry.size.height * 0.48)
+        }
+    }
+
+    private var symbolName: String {
+        let prefix = feedback.direction == .forward ? "goforward" : "gobackward"
+        return [5, 10, 15, 30, 45, 60, 75, 90].contains(feedback.seconds)
+            ? "\(prefix).\(feedback.seconds)" : prefix
     }
 }
 
@@ -374,6 +415,7 @@ extension PlaybackState {
 /// 左上角的「✕ 关闭」，和 Infuse 一样只有这一个；片名在窗口标题栏里。
 private struct CloseButton: View {
     let window: NSWindow?
+    @State private var hovering = false
 
     var body: some View {
         Button { window?.performClose(nil) } label: {
@@ -384,11 +426,16 @@ private struct CloseButton: View {
             .padding(.leading, 10)
             .padding(.trailing, 12)
             .frame(height: 31)
-            .background(Color(white: 0.12).opacity(0.78), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .background(.black.opacity(hovering ? 0.24 : 0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(.white.opacity(hovering ? 0.22 : 0.13), lineWidth: 1))
+            .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .keyboardShortcut("w", modifiers: .command)
         .help("关闭播放窗口（⌘W）")
     }
@@ -447,7 +494,7 @@ private struct ControlBar: View {
                     if engine.audioOptions.count > 1 { audioTrackMenu }
                     settingsMenu
                     icon(window?.styleMask.contains(.fullScreen) == true ? "arrow.down.right.and.arrow.up.left"
-                         : "arrow.up.left.and.arrow.down.right", size: 16, label: "全屏（双击画面）") { window?.toggleFullScreen(nil) }
+                         : "arrow.up.left.and.arrow.down.right", size: 16, label: "全屏（回车）") { window?.toggleFullScreen(nil) }
                     PlayerControlButton(systemName: "list.bullet", size: 17, label: "打开字幕窗口") {
                         openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                     }
