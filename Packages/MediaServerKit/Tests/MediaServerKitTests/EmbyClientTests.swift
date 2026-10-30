@@ -9,6 +9,18 @@ private func account(host: String) -> EmbyAccount {
                 userID: "u1", userName: "atom", accessToken: "secret-token")
 }
 
+@Test func apiAndSubtitleRequestsUseProductUserAgent() async throws {
+    let session = StubProtocol.session(host: "user-agent.test") { request, _ in
+        #expect(request.value(forHTTPHeaderField: "User-Agent") == "ELEnglish/0.1.0 (macOS)")
+        if request.url!.path.contains("/Subtitles/") { return .json("1\n00:00:00,000 --> 00:00:01,000\nHello\n") }
+        return .json(#"{"Items":[],"TotalRecordCount":0}"#)
+    }
+    let client = EmbyClient(account: account(host: "user-agent.test"), identity: identity, session: session)
+    #expect(client.playbackHTTPHeaders == ["User-Agent": "ELEnglish/0.1.0 (macOS)"])
+    _ = try await client.resumeItems()
+    _ = try await client.subtitleText(itemID: "e1", mediaSourceID: "ms1", streamIndex: 2)
+}
+
 @Test func authorizationHeaderKeepsFieldsAfterUnicodeDeviceName() {
     let unicodeIdentity = ClientIdentity(appName: "ELEnglish", appVersion: "0.1.0",
                                          deviceName: "atom’s Mac Pro", deviceID: "dev-1")

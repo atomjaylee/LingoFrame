@@ -208,7 +208,8 @@ final class PlaybackSession {
             playMode = "Apple 原生显示管线"
             log.info("播放 \(itemID, privacy: .public) 路线 Apple 原生显示")
             mark("开始播放器")
-            try await engine.load(url: stream.url, id: item.id, startAt: start, durationHint: durationHint)
+            try await engine.load(url: stream.url, id: item.id, startAt: start, durationHint: durationHint,
+                                  httpHeaders: client.playbackHTTPHeaders)
             startReporting(generation: generation)
             if item.kind == .episode, let seriesID = item.seriesId {
                 let loaded = (try? await client.episodes(of: seriesID, season: item.seasonId)) ?? []
@@ -247,7 +248,7 @@ final class PlaybackSession {
         playMode = prepared.isPrewarmed ? "Apple 原生显示管线（预热命中）" : "Apple 原生显示管线（元数据命中）"
         do {
             try await engine.load(url: prepared.stream.url, id: prepared.item.id,
-                                  startAt: start, durationHint: durationHint)
+                                  startAt: start, durationHint: durationHint, httpHeaders: client.playbackHTTPHeaders)
         } catch {
             guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
@@ -346,7 +347,7 @@ final class PlaybackSession {
                 let stream = try client.resolveOriginalStream(itemID: item.id, info: info)
                 preparedNext = PreparedPlayback(serverID: serverID, item: item, stream: stream,
                                                 startAt: item.resumePositionSeconds, isPrewarmed: false)
-                let warmed = await NativePlayerEngine.prewarm(url: stream.url)
+                let warmed = await NativePlayerEngine.prewarm(url: stream.url, httpHeaders: client.playbackHTTPHeaders)
                 guard !Task.isCancelled, generation == loadGeneration,
                       preparedNext?.item.id == item.id else { return }
                 preparedNext?.isPrewarmed = warmed

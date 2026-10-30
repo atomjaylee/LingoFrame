@@ -14,6 +14,8 @@ public struct ClientIdentity: Hashable, Sendable {
         self.deviceID = deviceID
     }
 
+    public var userAgent: String { "\(appName)/\(appVersion) (macOS)" }
+
     func authorizationHeader(token: String?) -> String {
         // URLSession 会在非 ASCII 字符处截断请求头。电脑名常含弯引号或中文，
         // 一旦截断，后面的 Version 就不会发给 Emby，登录会报 appVersion 为空。
@@ -129,6 +131,7 @@ struct Transport: Sendable {
     func raw(method: String, url: URL, body: Data?) async throws -> Data {
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.httpMethod = method
+        request.setValue(identity.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(identity.authorizationHeader(token: token), forHTTPHeaderField: "X-Emby-Authorization")
         if let token { request.setValue(token, forHTTPHeaderField: "X-Emby-Token") }

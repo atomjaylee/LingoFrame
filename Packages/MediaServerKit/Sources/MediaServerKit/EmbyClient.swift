@@ -89,6 +89,9 @@ public struct EmbyClient: Sendable {
         transport = Transport(baseURL: account.serverURL, identity: identity, token: account.accessToken, session: session)
     }
 
+    /// 播放和预热使用同一身份，不携带接口认证头到媒体重定向地址。
+    public var playbackHTTPHeaders: [String: String] { ["User-Agent": transport.identity.userAgent] }
+
     private var user: String { "Users/\(account.userID)" }
     static let listFields = "PrimaryImageAspectRatio,ProductionYear,Overview,PremiereDate,RunTimeTicks,Genres,OfficialRating,CommunityRating,ProviderIds"
 
