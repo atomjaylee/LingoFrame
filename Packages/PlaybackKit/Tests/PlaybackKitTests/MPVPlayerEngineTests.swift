@@ -138,25 +138,26 @@ struct MPVPlayerEngineTests {
     @Test func surfaceHostScalesExistingFrameWithoutResizingRenderer() {
         let engine = MPVPlayerEngine()
         let surface = engine.surface
-        let host = MPVSurfaceHostView(surface: surface)
-        host.frame = NSRect(x: 0, y: 0, width: 720, height: 450)
+        let host = MPVSurfaceHostView(surface: surface,
+                                      renderSize: CGSize(width: 1920, height: 1200), contentsScale: 2)
+        host.frame = NSRect(x: 0, y: 0, width: 720, height: 405)
         host.layoutSubtreeIfNeeded()
-        host.presentationSize = CGSize(width: 720, height: 360)
-        surface.metalLayer.drawableSize = CGSize(width: 1440, height: 900)
+        host.presentationSize = CGSize(width: 1920, height: 1080)
+        surface.metalLayer.drawableSize = CGSize(width: 3840, height: 2400)
 
-        for (size, scale) in [(CGSize(width: 1440, height: 720), 2.0),
-                              (CGSize(width: 900, height: 450), 1.25),
-                              (CGSize(width: 1920, height: 1080), 8.0 / 3.0),
-                              (CGSize(width: 720, height: 360), 1.0)] {
+        for (size, scale) in [(CGSize(width: 720, height: 405), 0.375),
+                              (CGSize(width: 1440, height: 810), 0.75),
+                              (CGSize(width: 1920, height: 1080), 1.0),
+                              (CGSize(width: 960, height: 540), 0.5)] {
             host.frame.size = size
             host.layoutSubtreeIfNeeded()
-            #expect(host.renderSize == CGSize(width: 720, height: 450))
-            #expect(surface.bounds.size == CGSize(width: 720, height: 450))
-            #expect(surface.metalLayer.drawableSize == CGSize(width: 1440, height: 900))
+            #expect(host.renderSize == CGSize(width: 1920, height: 1200))
+            #expect(surface.bounds.size == CGSize(width: 1920, height: 1200))
+            #expect(surface.metalLayer.drawableSize == CGSize(width: 3840, height: 2400))
             #expect(abs(surface.layer!.affineTransform().a - scale) < 0.001)
             #expect(abs(surface.layer!.affineTransform().d - scale) < 0.001)
-            #expect(abs(surface.layer!.position.x - (size.width - 720 * scale) / 2) < 0.001)
-            #expect(abs(surface.layer!.position.y - (size.height - 450 * scale) / 2) < 0.001)
+            #expect(abs(surface.layer!.position.x - (size.width - 1920 * scale) / 2) < 0.001)
+            #expect(abs(surface.layer!.position.y - (size.height - 1200 * scale) / 2) < 0.001)
         }
 
         surface.removeFromSuperview()
@@ -164,9 +165,9 @@ struct MPVPlayerEngineTests {
         nextHost.frame = NSRect(x: 0, y: 0, width: 1000, height: 500)
         nextHost.presentationSize = CGSize(width: 720, height: 360)
         nextHost.layoutSubtreeIfNeeded()
-        #expect(nextHost.renderSize == CGSize(width: 720, height: 450))
-        #expect(surface.bounds.size == CGSize(width: 720, height: 450))
-        #expect(surface.metalLayer.drawableSize == CGSize(width: 1440, height: 900))
+        #expect(nextHost.renderSize == CGSize(width: 1920, height: 1200))
+        #expect(surface.bounds.size == CGSize(width: 1920, height: 1200))
+        #expect(surface.metalLayer.drawableSize == CGSize(width: 3840, height: 2400))
     }
 
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(1)))
@@ -178,7 +179,8 @@ struct MPVPlayerEngineTests {
             try? FileManager.default.removeItem(at: replacement)
         }
         let engine = MPVPlayerEngine()
-        let host = MPVSurfaceHostView(surface: engine.surface)
+        let host = MPVSurfaceHostView(surface: engine.surface,
+                                      renderSize: CGSize(width: 640, height: 360), contentsScale: 2)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 360),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
