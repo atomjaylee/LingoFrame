@@ -31,13 +31,13 @@
 | 语言 | **Swift 6 语言模式**（严格并发检查） | Swift 6.2 | — | 编译期发现数据竞争，播放器这种多线程程序最需要这一点 |
 | 构建 | **Xcode 26 + XcodeGen**（`project.yml` 生成工程）+ 本地 Swift Package 分模块 | XcodeGen 已安装 | MIT | 工程文件可以纳入版本管理、不容易冲突；模块之间边界清楚，编译也快 |
 | UI | **SwiftUI + Observation（`@Observable`）**；播放窗口用 AppKit（`NSWindow`/`NSView`） | macOS 15 SDK 26 | — | SwiftUI 写界面效率高；全屏、窗口比例、图层这些细节由 AppKit 精确控制。用 Xcode 26 编译后，在 macOS 26 上会自动获得 Liquid Glass 外观 |
-| 视频图层 | `CAMetalLayer` + mpv `gpu-next` / MoltenVK | libmpv | GPL/LGPL 取决于构建 | 一个渲染链路覆盖全部容器，避免切换引擎 |
-| 播放内核 | **libmpv 单引擎** | FFmpegKit 9.0.2 | GPL（个人自用） | MKV 直接拆包；成熟的缓存、精确跳转、硬解和音画同步，不再转封装 |
-| 解封装 / 解码 | libmpv 内置 FFmpeg + VideoToolbox | FFmpeg 9 | 跟随 FFmpegKit | H.264/HEVC 走系统硬解，其余格式由 FFmpeg 统一处理 |
+| 视频图层 | **AVPlayerLayer / AVSampleBufferDisplayLayer** | 系统 | — | 图层尺寸直接跟窗口同步，缩放不触发解码器重建，也不需要固定画布拉伸 |
+| 播放内核 | **AetherEngine 原生/软件双路线** | 7.52.x | LGPL-3.0 + App Store 例外 | FFmpeg 解封装，H.264/HEVC 走 HLS-fMP4 + AVPlayer，其他编码自动走软件解码兜底 |
+| 解封装 / 解码 | AetherEngine 的 FFmpeg + VideoToolbox / dav1d / libavcodec | FFmpegBuild 3.11.x | LGPL | 容器兼容与显示职责分离，Apple 原生管线负责 HDR、DV、音画同步和窗口显示 |
 | AV1 软解 | **dav1d**（作为 FFmpeg 的依赖一起编进去） | 1.5.x | BSD-2 | 最快的 AV1 软解码器 |
 | ASS 特效字幕 | **libass**（观影模式下渲染成位图叠加；学习模式只取纯文本，由我们自己绘制） | 0.17.x | ISC | 番剧和特效字幕要还原到 IINA 的水平，离不开它 |
 | 去隔行 | FFmpeg **bwdif** 滤镜（只在软解兜底路径使用） | 跟随 FFmpeg | LGPL | 处理 MPEG-2 / VC-1 / 1080i 隔行片源；构建时不加 `--enable-gpl`，GPL 滤镜会被自动排除 |
-| HDR / 杜比片源 | libplacebo 映射到当前显示器能力 | 跟随 libmpv | LGPL | 单引擎优先，不保证苹果原生杜比视界信号输出 |
+| HDR / 杜比片源 | AVFoundation 原生 HDR / Dolby Vision 路线 | 系统 + AetherEngine | LGPL | 让系统完成 EDR、显示能力匹配和动态元数据处理 |
 | 网络 / Emby | `URLSession` + async/await + `Codable`，Emby 客户端自己写 | 系统 | — | Emby 只用到二十几个接口，自己写比用第三方 SDK 更可控 |
 | 图片缓存 | 自写 `ImagePipeline`（URLCache 磁盘缓存 + NSCache + ImageIO 降采样） | 系统 | — | M1 实测够用，少一个依赖；海报墙出现性能问题再换 Nuke |
 | 数据库 | **SQLiteData**（Point-Free，底层是 **GRDB 7**） | 1.x / 7.x | MIT | 用起来像 SwiftData，底层是 SQLite，性能和稳定性都更好；**自带 CloudKit 同步**，M4 做多设备同步时可以直接用 |
@@ -56,8 +56,8 @@
 | 分发 | **Developer ID 签名 + 公证 + Sparkle 自动更新**；稳定后再评估上架 Mac App Store | Sparkle 2.x | MIT | 不受审核和沙盒限制，迭代快；需要 Apple 开发者账号（99 美元/年） |
 
 **明确不用的东西**：
-- AVPlayer + 本地 HLS 转封装：起播和远距离跳转都需要重建分段链路
-- 双引擎或按格式切换：增加状态分叉和稳定性风险
+- libmpv `wid` 窗口嵌入：GUI 工具包缩放时没有可靠的外部 resize 通道，已经实测导致闪屏、黑屏或固定画布放大变糊
+- 在窗口层补偿播放内核：固定低分辨率画布、缩放后 reload、重建视频输出都禁止
 - VLCKit：HDR/DV 体验差
 - KSPlayer 免费版：GPL
 - SwiftData：线程问题和性能问题仍然比较多
@@ -68,28 +68,28 @@
 
 ## 2. 播放内核细节
 
+```mermaid
+flowchart LR
+    Detail[详情页] --> Warm[预取片源头部字节]
+    Emby[Emby 原文件流] --> Demux[FFmpeg 解封装]
+    Warm --> Demux
+    Demux --> Native{编码路线}
+    Native -->|H.264 / HEVC / DV| HLS[HLS-fMP4]
+    HLS --> AVP[AVPlayerLayer]
+    Native -->|VP9 / MPEG-2 / VC-1 等| SW[软件解码]
+    SW --> SBDL[AVSampleBufferDisplayLayer]
+    Demux --> Subs[结构化字幕 Cue]
+    Subs --> Learning[LearningCore 叠加层]
 ```
-详情页 → 提前请求 PlaybackInfo → libmpv 暂停预热首帧
-                                      │
-Emby 原文件流 (HTTP Range) ───────────┤
-                                      ▼
-                     libmpv / FFmpeg 解封装
-                         │        │        │
-                         │        │        └── 字幕轨道 → LearningCore
-                         │        └── 音频解码与主时钟
-                         └── VideoToolbox 硬解 → gpu-next → CAMetalLayer
-```
 
-远程缓存采用一条持续 Range 连接，收到数据后滚动写入 64MB 磁盘段；只有文件头/尾探测或用户跳转时才重开连接。缓存会复用 115 跳转后的直链并绕开系统代理，单片和全局共同受用户设置的容量上限约束。详情页预热使用约 32–48MB 的小缓存预算，进入播放后再扩大。
+窗口缩放只改变 `AVPlayerLayer` 或 `AVSampleBufferDisplayLayer` 的 frame。解封装、解码、缓存、播放时钟和字幕时间轴都不接收窗口事件。
 
-缓存容量可以在「设置 → 缓存与预加载」选择 5–200GB；进度条用琥珀色显示已播放、白色显示 mpv 当前可无网络跳转的缓存进度。
-
-字幕先由 mpv 直接显示 ASS/PGS，保证起播即有字幕；Emby 文本字幕下载完成后，再切换到支持点词和逐句跳转的学习字幕。播放窗口是单例，所有请求复用同一个 libmpv 状态机。
+详情页只做轻量字节预热，不再提前创建或暂停一个隐藏播放器。播放缓存由当前会话管理，换片和停止后按会话回收。
 
 稳定性要点（写进代码规范）：
 1. H.264 / HEVC 优先使用 VideoToolbox，播放器不自行维护第二套时钟。
 2. 拖进度条时只更新预览，松手后只提交最后一次跳转；字幕连点同样采用最后请求生效。
-3. 详情页预热和播放窗口复用同一个 libmpv 实例，不重复打开文件和探测轨道。
+3. 全 App 复用一个长生命周期播放引擎；换片调用 `load`，窗口销毁不销毁引擎。
 4. 学习字幕只以 10Hz 检查句子边界，字幕叠加层仅在换句时刷新。
 5. **ASR 和翻译是离线批处理**：每集只跑一次，结果写进数据库；插着电源时可以预处理下一集。
 6. **系统处于低电量模式时**，暂停后台预处理，并降低网络预读量。
@@ -104,9 +104,8 @@ elenglish/
 ├── App/                        # SwiftUI App 入口、窗口、菜单、快捷键
 ├── Packages/
 │   ├── MediaServerKit/         # ✅ Emby 客户端（Jellyfin 待做）
-│   ├── PlaybackKit/            # ✅ libmpv 单内核、Metal 画面、精确跳转、持久分块 RangeCache
-│   ├── FFmpegBridge/           # FFmpeg 的 C 模块和 Swift 封装（只有这个模块直接接触 C）
-│   ├── DoviBridge/             # libdovi 的 C 接口封装
+│   ├── PlaybackCore/           # ✅ 播放协议、状态、轨道、缓冲区间和诊断模型
+│   ├── PlaybackKit/            # ✅ AetherEngine 适配器与原生播放 Surface
 │   ├── LearningCore/           # ✅ 字幕与学习层的核心模型和扩展协议，不依赖界面和播放内核（见 subtitle-learning-design.md）
 │   ├── SubtitleKit/            # SRT/VTT/ASS 解析、断句、中英对齐、OCR
 │   ├── TranscriptionKit/       # whisper.cpp 与 SpeechAnalyzer 的统一接口
@@ -119,7 +118,7 @@ elenglish/
 └── docs/
 ```
 
-各模块的依赖方向是单向的：`App → LearningKit/PlaybackKit/MediaServerKit → Bridges`。学习层只依赖 `PlayerEngine` 协议，不依赖任何具体的播放内核。
+各模块的依赖方向是单向的：`App → PlaybackKit → PlaybackCore`，`PlaybackKit → AetherEngine`。学习层只依赖 `SegmentPlayer`，不依赖任何具体播放内核。
 
 ---
 
@@ -140,7 +139,7 @@ elenglish/
 
 | 假设 | 验证方法 | 如果不成立怎么办 |
 |---|---|---|
-| 详情页预热后点击到首帧小于 500ms | 对真实 115 MKV 打点 | 调整预读范围和 libmpv 探测参数 |
+| 详情页预热后点击到首帧小于 500ms | 对真实 115 MKV 打点 | 调整 AetherEngine 头部预热和探测预算 |
 | 已缓存位置跳转小于 400ms | 连续拖动和字幕跳转测试 | 扩大前后向包缓存 |
 | 长时间播放音画不同步不持续扩大 | 连续播放两小时记录 `avsync` | 固定以音频为主时钟并收集异常片源 |
 | whisper.cpp 在 Intel 机器上转写一集 45 分钟所需时间可以接受 | 在当前开发机上实测 | Intel 机器默认只用已有字幕，ASR 作为可选功能 |
@@ -150,13 +149,13 @@ elenglish/
 ## 6. M1 现状（2026-10-29）
 
 已完成并验证：
-- XcodeGen 工程，6 个本地模块，Swift 6 严格并发；PlaybackKit 用真实 MKV 验证 libmpv 直读、精确跳转和预热复用
+- XcodeGen 工程，Swift 6 严格并发；PlaybackCore 与 PlaybackKit 分离业务协议和具体引擎
 - 主题令牌（3 个内置主题 + JSON 用户主题，局部覆盖继承）、面板注册、停靠布局（左 / 右 / 底 / 独立窗口，可拖动大小，预设，自动保存）
 - Emby：登录、媒体库、继续观看、接下来看、最新、搜索、详情、分季分集、标记已看、原文件直放与播放进度上报
-- 播放窗口：libmpv 单内核、VideoToolbox 硬解、续播、控制条自动隐藏、倍速、音量、音轨、HUD 提示、播放下一集
+- 播放窗口：AetherEngine 原生/软件双路线、续播、控制条自动隐藏、倍速、音量、音轨、HUD 提示、播放下一集
 - 本地视频：菜单「打开本地视频」或访达「用 ELEnglish 打开」
 
-**当前直放方案（重要）**：所有容器都由 libmpv 读取 Emby 原文件；没有服务器转码、本机 HLS、本机 HTTP 服务和临时视频分段。详情页会提前解析下一部要播放的视频，点击后复用已准备的内核。
+**当前直放方案（重要）**：Emby 仍提供原文件地址；AetherEngine 在本机解封装，并按编码选择 HLS-fMP4 + AVPlayer 或软件解码 + AVSampleBufferDisplayLayer。服务器不转码。
 
 已连接真实 Emby 4.8.10 服务器完成端到端联调；开发机实测无需服务器转码权限即可播放 MP4 和 MKV。
 

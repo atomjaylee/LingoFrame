@@ -35,7 +35,8 @@ xcodebuild -project ELEnglish.xcodeproj -scheme ELEnglish -derivedDataPath build
 | `Packages/DesignSystem` | Rex 设计令牌（颜色 / 字体 / 圆角 / 间距 / 阴影）、主题存储、Rex 组件、图片加载与取色 |
 | `Packages/Workspace` | 面板注册、停靠布局、布局预设与存储 |
 | `Packages/MediaServerKit` | Emby 客户端、设备能力描述、凭据存储、片源标签 |
-| `Packages/PlaybackKit` | libmpv 单播放内核、Metal 视频图层、精确跳转与预热 |
+| `Packages/PlaybackCore` | 播放协议、状态、轨道、缓冲区间和诊断模型 |
+| `Packages/PlaybackKit` | AetherEngine 适配器、Apple 原生视频图层与软件解码兜底 |
 
 ## 用户数据位置
 
