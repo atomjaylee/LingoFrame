@@ -17,6 +17,7 @@ final class ServerConnection: Identifiable {
     private(set) var state: StatusDot.State = .idle
     private(set) var libraries: [EmbyItem] = []
     private(set) var catalog: [EmbyItem] = []
+    private(set) var catalogByTMDB: [TMDBRef: EmbyItem] = [:]
     private(set) var errorMessage: String?
     private(set) var lastRefreshed: Date?
 
@@ -41,8 +42,17 @@ final class ServerConnection: Identifiable {
             let views = try await client.views().filter { ["movies", "tvshows", "mixed", nil].contains($0.collectionType) }
             var all: [EmbyItem] = []
             for lib in views { all += (try? await client.catalog(in: lib.id)) ?? [] }
+            var index: [TMDBRef: EmbyItem] = [:]
+            index.reserveCapacity(all.count)
+            for item in all {
+                if let id = item.tmdbID {
+                    let ref = TMDBRef(type: item.kind == .series ? .tv : .movie, id: id)
+                    if index[ref] == nil { index[ref] = item }
+                }
+            }
             libraries = views
             catalog = all
+            catalogByTMDB = index
             state = .online
             errorMessage = nil
             lastRefreshed = .now
@@ -258,7 +268,7 @@ final class AppModel {
     /// 资源库里有没有这部作品（按 TMDB 编号对号）。
     func match(_ ref: TMDBRef) -> LibraryMatch? {
         for server in servers {
-            if let item = server.catalog.first(where: { $0.tmdbID == ref.id && ($0.kind == .series) == (ref.type == .tv) }) {
+            if let item = server.catalogByTMDB[ref] {
                 return LibraryMatch(serverID: server.id, item: item)
             }
         }

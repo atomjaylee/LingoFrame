@@ -37,21 +37,21 @@ xcodebuild -project ELEnglish.xcodeproj -scheme ELEnglish -derivedDataPath build
 | `Packages/MediaServerKit` | Emby 客户端、设备能力描述、凭据存储、片源标签 |
 | `Packages/PlaybackCore` | 播放协议、状态、轨道、缓冲区间和诊断模型 |
 | `Packages/PlaybackKit` | AetherEngine 适配器、Apple 原生视频图层与软件解码兜底 |
+| `Packages/TMDBKit` | TMDB 客户端（搜索、详情、图片与磁盘缓存） |
 
 ## 用户数据位置
 
 | 内容 | 位置 |
 |---|---|
-| 自定义主题（JSON） | `~/Library/Application Support/ELEnglish/Themes/` |
 | 布局和布局预设 | `~/Library/Application Support/ELEnglish/Layouts/` |
 | 登录信息 | 正式版：钥匙串；开发版：`~/Library/Application Support/ELEnglish/dev-account.json`（600 权限） |
-| 图片缓存 | `~/Library/Caches/app.elenglish/Images/` |
+| 图片与 TMDB 缓存 | `~/Library/Caches/app.elenglish/` |
+| 字幕缓存 | `~/Library/Caches/ELEnglish/Subtitles/` |
 
 ## 设计系统
 
 界面遵循设计系统 Rex（claude.ai 上的 Design System「Rex」）。令牌在 `Packages/DesignSystem/Sources/DesignSystem/Theme.swift`，
-名称与 Rex 的 tokens.json 一一对应（kebab-case 改成 camelCase）；内置「Rex 影院」（深色）、「Rex 磨砂」（浅色）、「Rex 跟随系统」三个主题。
-用户主题 JSON 只写想改的令牌即可，其余继承 `base` 指定的内置主题。
+名称与 Rex 的 tokens.json 一一对应（kebab-case 改成 camelCase）；支持深色、浅色、跟随系统三种外观模式。
 
 ## 开发版调试工具
 

@@ -29,6 +29,8 @@ packages:
     path: Packages/Workspace
   MediaServerKit:
     path: Packages/MediaServerKit
+  PlaybackCore:
+    path: Packages/PlaybackCore
   PlaybackKit:
     path: Packages/PlaybackKit
   TMDBKit:
@@ -95,6 +97,7 @@ schemes:
         - package: DesignSystem/DesignSystemTests
         - package: Workspace/WorkspaceTests
         - package: MediaServerKit/MediaServerKitTests
+        - package: PlaybackCore/PlaybackCoreTests
         - package: PlaybackKit/PlaybackKitTests
         - package: TMDBKit/TMDBKitTests
     archive:

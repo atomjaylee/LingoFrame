@@ -99,7 +99,11 @@ final class RecommendationStore {
         defer { if generation == loadGeneration { isLoading = false } }
         var firstError: Error?
         await withTaskGroup(of: (String, Result<TMDBTitle?, Error>).self) { group in
-            for entry in LearningCatalog.allEntries {
+            let entries = LearningCatalog.allEntries.sorted { $0.featured && !$1.featured }
+            let maxConcurrency = 4
+            var nextIndex = 0
+
+            func enqueue(_ entry: CatalogEntry) {
                 group.addTask {
                     do {
                         guard let ref = try await tmdb.resolve(entry.type, title: entry.title, year: entry.year) else {
@@ -111,6 +115,12 @@ final class RecommendationStore {
                     }
                 }
             }
+
+            while nextIndex < min(maxConcurrency, entries.count) {
+                enqueue(entries[nextIndex])
+                nextIndex += 1
+            }
+
             for await (id, result) in group {
                 guard !Task.isCancelled, generation == loadGeneration else {
                     group.cancelAll()
@@ -119,6 +129,10 @@ final class RecommendationStore {
                 switch result {
                 case .success(let title): titles[id] = title
                 case .failure(let error): firstError = firstError ?? error
+                }
+                if nextIndex < entries.count {
+                    enqueue(entries[nextIndex])
+                    nextIndex += 1
                 }
             }
         }

@@ -30,9 +30,12 @@ import Testing
 
 @Test func findsCueAtTime() {
     let cues = [
-        SubtitleCue(range: TimeRange(startMs: 0, endMs: 1000), text: "a"),
-        SubtitleCue(range: TimeRange(startMs: 2000, endMs: 3000), text: "b"),
+        SubtitleCue(range: TimeRange(startMs: 1000, endMs: 2000), text: "a"),
+        SubtitleCue(range: TimeRange(startMs: 3000, endMs: 4000), text: "b"),
     ]
-    #expect(cues.cue(at: MediaTime(ms: 2500))?.text == "b")
-    #expect(cues.cue(at: MediaTime(ms: 1500)) == nil)
+    #expect(cues.cue(at: MediaTime(ms: 3500))?.text == "b")
+    #expect(cues.cue(at: MediaTime(ms: 2500)) == nil)
+    #expect(cues.latestIndex(atOrBefore: MediaTime(ms: 500)) == nil)
+    #expect(cues.latestIndex(atOrBefore: MediaTime(ms: 2500)) == 0)
+    #expect(cues.latestIndex(atOrBefore: MediaTime(ms: 3000)) == 1)
 }

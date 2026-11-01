@@ -230,6 +230,12 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         try Task.checkCancellation()
         cancelSegment()
         let generation = segmentGeneration
+        let previousRate = self.rate
+        defer {
+            if generation == segmentGeneration, self.rate != previousRate {
+                self.rate = previousRate
+            }
+        }
         await seek(to: range.start.seconds, exact: true)
         guard generation == segmentGeneration else { throw CancellationError() }
         self.rate = rate
@@ -349,7 +355,15 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
 
     private func scheduleBitmapSubtitleRecognition() {
         guard bitmapRecognitionEnabled, !isRecognizingBitmapSubtitles else { return }
-        let pending = nativeCues.filter { $0.image != nil && !recognizedBitmapCueIDs.contains($0.id) }
+        let now = currentTime
+        let pending = nativeCues
+            .filter { $0.image != nil && !recognizedBitmapCueIDs.contains($0.id) }
+            .sorted {
+                let aFuture = $0.endTime >= now
+                let bFuture = $1.endTime >= now
+                if aFuture != bFuture { return aFuture }
+                return abs($0.startTime - now) < abs($1.startTime - now)
+            }
         guard !pending.isEmpty else { return }
         bitmapRecognitionGeneration &+= 1
         let generation = bitmapRecognitionGeneration
@@ -363,9 +377,11 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
                 recognizedBitmapCueIDs.insert(cue.id)
                 guard let text = await BitmapSubtitleRecognizer.recognize(image, language: language),
                       !Task.isCancelled, generation == bitmapRecognitionGeneration else { continue }
-                recognizedSubtitleCues.append(RecognizedNativeSubtitleCue(
-                    id: cue.id, startTime: cue.startTime, endTime: cue.endTime, text: text))
-                recognizedSubtitleCues.sort { $0.startTime < $1.startTime }
+                let item = RecognizedNativeSubtitleCue(
+                    id: cue.id, startTime: cue.startTime, endTime: cue.endTime, text: text)
+                let insertIndex = recognizedSubtitleCues.firstIndex { $0.startTime > item.startTime }
+                    ?? recognizedSubtitleCues.endIndex
+                recognizedSubtitleCues.insert(item, at: insertIndex)
             }
             guard generation == bitmapRecognitionGeneration else { return }
             isRecognizingBitmapSubtitles = false
@@ -389,14 +405,18 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
 
     private func updateSubtitle(at time: Double) {
         guard nativeSubtitlesVisible else {
-            currentSubtitleText = nil
-            currentSubtitleImages = []
+            if currentSubtitleText != nil { currentSubtitleText = nil }
+            if !currentSubtitleImages.isEmpty { currentSubtitleImages = [] }
             return
         }
         let active = nativeCues.filter { $0.startTime <= time && time < $0.endTime }
-        let text = active.compactMap(\.text).joined(separator: "\n")
-        currentSubtitleText = text.isEmpty ? nil : text
-        currentSubtitleImages = active.compactMap(\.image)
+        let joined = active.compactMap(\.text).joined(separator: "\n")
+        let text = joined.isEmpty ? nil : joined
+        if currentSubtitleText != text { currentSubtitleText = text }
+        let images = active.compactMap(\.image)
+        if currentSubtitleImages.map(\.id) != images.map(\.id) {
+            currentSubtitleImages = images
+        }
     }
 
     private nonisolated static func milliseconds(_ duration: Duration) -> Double {

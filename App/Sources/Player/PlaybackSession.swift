@@ -69,6 +69,8 @@ final class PlaybackSession {
     }
     /// 当前句在主字幕里的序号，每 0.1 秒按播放位置更新，只有换句时才变。
     private(set) var currentLine: Int?
+    /// 学习面板高亮的句子序号：句间空档保持在上一句，仅在句子边界变化时更新，避免界面高频读取播放时钟。
+    private(set) var activeLine: Int?
     /// 副字幕（中文）里和当前时间重叠的那一条。
     private(set) var currentSecondary: String?
     /// 单句循环：每句重复几遍再进入下一句（关 / 3 遍 / 5 遍 / 一直）。换集时保留。
@@ -312,6 +314,7 @@ final class PlaybackSession {
         seekFeedback = nil
         ticker = nil
         currentLine = nil
+        activeLine = nil
         currentSecondary = nil
         subtitleOptions = []
         primarySubtitle = nil
@@ -404,6 +407,8 @@ final class PlaybackSession {
             subtitleTask?.cancel()
             primaryCues = []
             secondaryCues = []
+            currentLine = nil
+            activeLine = nil
             usesNativePlaybackSubtitles = false
             disableBitmapSubtitleRecognition()
             subtitleMode = .off
@@ -420,6 +425,7 @@ final class PlaybackSession {
                 primaryCues = []
                 secondaryCues = []
                 currentLine = nil
+                activeLine = nil
                 enableBitmapSubtitleRecognition(language: track.language)
             } else if primaryCues.isEmpty, let fallback = preferredLearningTrack() {
                 disableBitmapSubtitleRecognition()
@@ -575,6 +581,10 @@ final class PlaybackSession {
                     self.currentLine = index
                     if !self.loopEnabled { self.loopPass = 1 }
                 }
+                let active = index
+                    ?? self.primaryCues.latestIndex(atOrBefore: t)
+                    ?? self.primaryCues.indices.first
+                if active != self.activeLine { self.activeLine = active }
                 let secondary = self.secondaryCues.cue(at: t)?.text
                 if secondary != self.currentSecondary { self.currentSecondary = secondary }
                 try? await Task.sleep(for: .milliseconds(100))
@@ -604,9 +614,7 @@ final class PlaybackSession {
 
     /// 当前句；两句之间的空档里算作上一句。
     private var anchorLine: Int? {
-        if let currentLine { return currentLine }
-        let t = now
-        return primaryCues.lastIndex { $0.range.start <= t }
+        currentLine ?? primaryCues.latestIndex(atOrBefore: now)
     }
 
     func jump(toLine index: Int) {
@@ -614,6 +622,7 @@ final class PlaybackSession {
         jumpGeneration &+= 1
         let generation = jumpGeneration
         currentLine = index
+        activeLine = index
         loopPass = 1
         pausedAfterLine = nil
         Task {

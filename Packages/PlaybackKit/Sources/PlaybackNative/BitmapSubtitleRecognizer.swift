@@ -17,17 +17,16 @@ public struct RecognizedNativeSubtitleCue: Identifiable, Hashable, Sendable {
     }
 }
 
-/// Vision 会同步等待系统模型，用独立线程执行，避免占住 Swift 并发线程池和播放器主线程。
+/// Vision 会同步等待系统模型，用独立串行队列执行，避免占住 Swift 并发线程池和播放器主线程。
 enum BitmapSubtitleRecognizer {
+    private static let queue = DispatchQueue(label: "app.elenglish.subtitle-ocr", qos: .utility)
+
     nonisolated static func recognize(_ image: CGImage, language: String?) async -> String? {
         await withCheckedContinuation { continuation in
-            let worker = Thread {
+            queue.async {
                 let result = autoreleasepool { recognizeSynchronously(image, language: language) }
                 continuation.resume(returning: result)
             }
-            worker.name = "app.elenglish.subtitle-ocr"
-            worker.qualityOfService = .utility
-            worker.start()
         }
     }
 

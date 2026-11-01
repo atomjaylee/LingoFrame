@@ -8,7 +8,7 @@ import Workspace
 @MainActor
 final class PlayerWindowController: NSObject, NSWindowDelegate {
     static let shared = PlayerWindowController()
-    private var window: NSWindow?
+    private(set) var window: NSWindow?
     private var frameAspectRatio: Double?
     private weak var model: AppModel?
 

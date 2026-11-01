@@ -3,12 +3,21 @@ import MediaServerKit
 import SwiftUI
 
 struct SearchView: View {
-    @Environment(\.embyClient) private var client
+    @Environment(AppModel.self) private var model
+    @Environment(\.embyClient) private var scopedClient
+    @Environment(\.embyServerID) private var scopedServerID
     @Environment(\.theme) private var theme
     @Environment(\.contentLeadingInset) private var inset
     @State private var term = ""
-    @State private var results: [EmbyItem] = []
+    @State private var results: [SearchResult] = []
     @FocusState private var focused: Bool
+
+    private struct SearchResult: Identifiable {
+        let serverID: String
+        let client: EmbyClient
+        let item: EmbyItem
+        var id: String { "\(serverID):\(item.id)" }
+    }
 
     var body: some View {
         ScrollView {
@@ -29,8 +38,13 @@ struct SearchView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: theme.metrics.posterWidth, maximum: theme.metrics.posterWidth * 1.3),
                                              spacing: theme.metrics.space(4))],
                           alignment: .leading, spacing: theme.metrics.space(6)) {
-                    ForEach(results) { ItemCard(item: $0) }
+                    ForEach(results) { result in
+                        ItemCard(item: result.item)
+                            .environment(\.embyClient, result.client)
+                            .environment(\.embyServerID, result.serverID)
+                    }
                 }
+                .mediaCardStyle(PosterTileStyle())
             }
             .padding(.leading, inset)
             .padding(.trailing, theme.metrics.space(6))
@@ -43,12 +57,28 @@ struct SearchView: View {
         .onAppear { focused = true }
         .task(id: term) {
             let query = term.trimmingCharacters(in: .whitespaces)
-            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-            guard !Task.isCancelled, let client, !query.isEmpty else {
+            guard !query.isEmpty else {
                 results = []
                 return
             }
-            let found = (try? await client.search(query)) ?? []
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            guard !Task.isCancelled else { return }
+            let targets: [(id: String, client: EmbyClient)]
+            if let scopedClient, let scopedServerID {
+                targets = [(scopedServerID, scopedClient)]
+            } else {
+                targets = model.servers.filter { $0.state != .offline }.map { ($0.id, $0.client) }
+            }
+            guard !targets.isEmpty else {
+                results = []
+                return
+            }
+            var found: [SearchResult] = []
+            for target in targets {
+                let items = (try? await target.client.search(query)) ?? []
+                guard !Task.isCancelled else { return }
+                found += items.map { SearchResult(serverID: target.id, client: target.client, item: $0) }
+            }
             guard !Task.isCancelled, term.trimmingCharacters(in: .whitespaces) == query else { return }
             results = found
         }

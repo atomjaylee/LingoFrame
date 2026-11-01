@@ -38,11 +38,14 @@ public enum SubtitleParser {
         return (hours * 3600 + minutes * 60) * 1000 + Int64((seconds * 1000).rounded())
     }
 
+    private static let htmlTagPattern = /<[^>]+>/
+    private static let assOverridePattern = /\{[^}]*\}/
+
     /// 去掉 <i>、<font> 等标签和 {\an8} 这类 ASS 覆盖代码，把 \N 换成换行。
     static func clean(_ line: String) -> String {
         var s = line.replacingOccurrences(of: "\\N", with: "\n").replacingOccurrences(of: "\\n", with: "\n")
-        s = s.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
-        s = s.replacingOccurrences(of: #"\{[^}]*\}"#, with: "", options: .regularExpression)
+        s.replace(htmlTagPattern, with: "")
+        s.replace(assOverridePattern, with: "")
         s = s.replacingOccurrences(of: "&nbsp;", with: " ").replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
         return s.trimmingCharacters(in: .whitespaces)
@@ -68,5 +71,15 @@ extension Array where Element == SubtitleCue {
             i -= 1
         }
         return nil
+    }
+
+    /// 开始时间不晚于 time 的最后一条字幕（两句之间的空档里指向刚播完的上一句），二分查找。
+    public func latestIndex(atOrBefore time: MediaTime) -> Int? {
+        var low = 0, high = count
+        while low < high {
+            let mid = (low + high) / 2
+            if self[mid].range.start <= time { low = mid + 1 } else { high = mid }
+        }
+        return low > 0 ? low - 1 : nil
     }
 }

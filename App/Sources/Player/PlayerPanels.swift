@@ -59,7 +59,9 @@ private struct TranscriptFloatingPanel: View {
         panel.contentMinSize = NSSize(width: 380, height: 660)
 
         guard !positioned,
-              let player = NSApp.windows.first(where: { $0 !== panel && $0.title == session.windowTitle }),
+              let player = PlayerWindowController.shared.window
+                  ?? NSApp.windows.first(where: { $0 !== panel && $0.title == session.windowTitle }),
+              player !== panel,
               let visible = player.screen?.visibleFrame else { return }
         positioned = true
         keyMonitor.start(window: panel) { chord in

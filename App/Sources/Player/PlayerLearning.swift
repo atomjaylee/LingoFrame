@@ -22,10 +22,12 @@ struct SubtitleOverlay: View {
             VStack(spacing: 8) {
                 if mode != .off, let line {
                     FlowLayout(spacing: 7, lineSpacing: 4) {
-                        ForEach(Array(Self.words(line.text).enumerated()), id: \.offset) { _, word in
-                            SubtitleWord(word: word, isSelected: lookup?.word == Self.bare(word)) {
+                        ForEach(Array(Self.words(line.text).enumerated()), id: \.offset) { index, word in
+                            let bare = Self.bare(word)
+                            SubtitleWord(word: word, isSelected: lookup?.index == index && lookup?.word == bare) {
+                                guard !bare.isEmpty else { return }
                                 session.engine.pause()
-                                lookup = WordLookup(word: Self.bare(word), sentence: line.text)
+                                lookup = WordLookup(word: bare, sentence: line.text, index: index)
                             }
                         }
                     }
@@ -163,6 +165,7 @@ struct FlowLayout: Layout {
 struct WordLookup: Equatable {
     let word: String
     let sentence: String
+    var index: Int? = nil
 }
 
 /// 查词卡片：单词、朗读、系统词典里的释义，以及这句原文。
@@ -233,9 +236,7 @@ struct LearningPanel: View {
     enum Tab: String { case transcript, episodes }
 
     private var currentLine: Int? {
-        session.currentLine
-            ?? session.primaryCues.lastIndex { $0.range.start.seconds <= session.engine.absoluteTime }
-            ?? session.primaryCues.indices.first
+        session.activeLine ?? session.primaryCues.indices.first
     }
 
     var body: some View {
@@ -400,11 +401,13 @@ private struct CurrentSentence: View {
 
             ScrollView {
                 FlowLayout(spacing: 6, lineSpacing: 4, alignment: .leading) {
-                    ForEach(Array(SubtitleOverlay.words(cue.text).enumerated()), id: \.offset) { _, word in
-                        SubtitleWord(word: word, isSelected: lookup?.word == SubtitleOverlay.bare(word)) {
+                    ForEach(Array(SubtitleOverlay.words(cue.text).enumerated()), id: \.offset) { index, word in
+                        let bare = SubtitleOverlay.bare(word)
+                        SubtitleWord(word: word, isSelected: lookup?.index == index && lookup?.word == bare) {
+                            guard !bare.isEmpty else { return }
                             resumeAfterLookup = session.engine.state == .playing
                             session.engine.pause()
-                            lookup = WordLookup(word: SubtitleOverlay.bare(word), sentence: cue.text)
+                            lookup = WordLookup(word: bare, sentence: cue.text, index: index)
                             showsLookup = true
                         }
                     }

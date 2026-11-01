@@ -531,10 +531,12 @@ enum StreamText {
         return code == "eng" || code == "en" || code.hasPrefix("en-")
     }
 
+    private static let zhLocale = Locale(identifier: "zh_CN")
+
     /// eng → 英语；认不出来就原样显示。
     static func language(_ code: String?) -> String {
         guard let code, !code.isEmpty else { return "未知" }
-        let zh = Locale(identifier: "zh_CN")
+        let zh = zhLocale
         if let name = zh.localizedString(forLanguageCode: code) { return name }
         if let name = Locale.Language(identifier: code).languageCode.flatMap({ zh.localizedString(forLanguageCode: $0.identifier) }) {
             return name
