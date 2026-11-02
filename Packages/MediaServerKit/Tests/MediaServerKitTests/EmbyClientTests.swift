@@ -9,6 +9,18 @@ private func account(host: String) -> EmbyAccount {
                 userID: "u1", userName: "atom", accessToken: "secret-token")
 }
 
+@Test func searchRequestsMoviesAndSeriesWithoutEpisodes() async throws {
+    let session = StubProtocol.session(host: "search-types.test") { request, _ in
+        let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(query.first { $0.name == "SearchTerm" }?.value == "Friends")
+        #expect(query.first { $0.name == "IncludeItemTypes" }?.value == "Movie,Series")
+        return .json(#"{"Items":[{"Id":"s1","Name":"Friends","Type":"Series"},{"Id":"m1","Name":"Friends Movie","Type":"Movie"}],"TotalRecordCount":2}"#)
+    }
+    let client = EmbyClient(account: account(host: "search-types.test"), identity: identity, session: session)
+    let hits = try await client.search("Friends")
+    #expect(hits.map(\.kind) == [.series, .movie])
+}
+
 @Test func apiAndSubtitleRequestsUseProductUserAgent() async throws {
     let session = StubProtocol.session(host: "user-agent.test") { request, _ in
         #expect(request.value(forHTTPHeaderField: "User-Agent") == "ELEnglish/0.1.0 (macOS)")

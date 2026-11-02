@@ -170,7 +170,7 @@ public struct EmbyClient: Sendable {
 
     public func search(_ term: String, limit: Int = 40) async throws -> [EmbyItem] {
         let page: ItemsPage = try await transport.get("\(user)/Items", [
-            "SearchTerm": term, "Recursive": "true", "IncludeItemTypes": "Movie,Series,Episode",
+            "SearchTerm": term, "Recursive": "true", "IncludeItemTypes": "Movie,Series",
             "Limit": "\(limit)", "Fields": Self.listFields, "EnableUserData": "true", "ImageTypeLimit": "1",
         ])
         return page.items

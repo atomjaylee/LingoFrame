@@ -64,7 +64,7 @@ struct SearchView: View {
                 Text("搜索").themedFont(.title1)
                 HStack(spacing: theme.metrics.space(2)) {
                     Image(systemName: "magnifyingglass").foregroundStyle(theme.colors.inkMuted.color)
-                    TextField("剧集、电影、单集", text: $term)
+                    TextField("剧集、电影", text: $term)
                         .textFieldStyle(.plain)
                         .themedFont(.body)
                         .focused($focused)
