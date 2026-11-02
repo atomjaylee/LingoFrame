@@ -520,7 +520,7 @@ private struct ControlBar: View {
                 let compact = geometry.size.width < 860
                 ZStack {
                     HStack(spacing: 6) {
-                        PlayerControlButton(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                        PlayerControlButton(image: Image(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill"),
                                             size: 16, label: engine.isMuted ? "取消静音" : "静音") {
                             session.toggleMute()
                         }
@@ -537,7 +537,7 @@ private struct ControlBar: View {
                         .disabled(session.previousItem == nil)
                         .opacity(session.previousItem == nil ? 0.35 : 1)
                         icon("gobackward.10", size: 20, label: "后退 10 秒（⇧←）") { session.seek(by: -10) }
-                        PlayerControlButton(systemName: engine.state == .playing ? "pause.fill" : "play.fill", size: 22,
+                        PlayerControlButton(image: Image(systemName: engine.state == .playing ? "pause.fill" : "play.fill"), size: 22,
                                             label: engine.state == .playing ? "暂停（空格）" : "播放（空格）",
                                             prominent: true) { session.togglePlay() }
                         icon("goforward.10", size: 20, label: "前进 10 秒（⇧→）") { session.seek(by: 10) }
@@ -558,10 +558,10 @@ private struct ControlBar: View {
                              label: window?.styleMask.contains(.fullScreen) == true ? "退出全屏（回车）" : "全屏（回车）") {
                             window?.toggleFullScreen(nil)
                         }
-                        PlayerControlButton(systemName: "translate", size: 17, label: "打开字幕与学习") {
+                        PlayerControlButton(image: Image(systemName: "translate"), size: 15, label: "打开字幕与学习") {
                             openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                         }
-                        PlayerControlButton(systemName: "list.bullet", size: 17, label: "选集") {
+                        PlayerControlButton(image: Image("EpisodePlaylist"), size: 17, label: "选集") {
                             showsEpisodes.toggle()
                         }
                         .disabled(session.siblings.isEmpty)
@@ -579,7 +579,7 @@ private struct ControlBar: View {
     }
 
     private func icon(_ name: String, size: Double, label: String, action: @escaping () -> Void) -> some View {
-        PlayerControlButton(systemName: name, size: size, label: label, action: action)
+        PlayerControlButton(image: Image(systemName: name), size: size, label: label, action: action)
     }
 
     private var separator: some View {
@@ -678,7 +678,7 @@ private struct ControlBar: View {
 }
 
 private struct PlayerControlButton: View {
-    let systemName: String
+    let image: Image
     let size: Double
     let label: String
     var prominent = false
@@ -689,7 +689,7 @@ private struct PlayerControlButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
+            image
                 .font(.system(size: size, weight: .semibold))
                 .foregroundStyle(foreground)
                 .frame(width: prominent ? 42 : 34, height: prominent ? 42 : 34)
