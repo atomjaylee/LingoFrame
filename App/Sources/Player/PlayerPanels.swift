@@ -11,7 +11,7 @@ enum PlayerPanels {
     static func register(in registry: PanelRegistry) {
         registry.register(PanelDescriptor(id: PanelIDs.transcript, title: "字幕与学习", systemImage: "captions.bubble",
                                           defaultPlacement: .floating) { TranscriptFloatingPanel() })
-        registry.register(PanelDescriptor(id: PanelIDs.episodes, title: "分集", systemImage: "list.bullet.rectangle",
+        registry.register(PanelDescriptor(id: PanelIDs.episodes, title: "选集", systemImage: "list.bullet.rectangle",
                                           defaultPlacement: .trailing) { EpisodesPanel() })
         registry.register(PanelDescriptor(id: PanelIDs.mediaInfo, title: "媒体信息", systemImage: "info.circle",
                                           defaultPlacement: .trailing) { MediaInfoPanel() })
@@ -131,24 +131,46 @@ private struct InfoRow: View {
 private struct EpisodesPanel: View {
     @Environment(PlaybackSession.self) private var session: PlaybackSession?
     @Environment(\.theme) private var theme
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
-        if let session {
-            if session.siblings.isEmpty {
-                ContentUnavailableView("不是剧集", systemImage: "film")
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(session.siblings) { ep in row(ep, session: session).id(ep.id) }
-                        }
-                        .padding(theme.metrics.space(3))
-                    }
-                    .onAppear { proxy.scrollTo(session.item?.id, anchor: .center) }
+        VStack(spacing: 0) {
+            HStack {
+                Text("选集").font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .gesture(WindowDragGesture())
+                    .allowsWindowActivationEvents()
+                Button {
+                    dismissWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.episodes)
+                } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain).clickablePointer()
+                .accessibilityLabel("关闭选集")
             }
-        } else {
-            NoSessionView()
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.08)).frame(height: 1) }
+            if let session {
+                if session.siblings.isEmpty {
+                    ContentUnavailableView("不是剧集", systemImage: "film")
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 2) {
+                                ForEach(session.siblings) { ep in row(ep, session: session).id(ep.id) }
+                            }
+                            .padding(theme.metrics.space(3))
+                        }
+                        .onAppear { proxy.scrollTo(session.item?.id, anchor: .center) }
+                    }
+                }
+            } else {
+                NoSessionView()
+            }
         }
     }
 

@@ -127,6 +127,7 @@ private extension PlayRequest {
 private struct PlayerScreen: View {
     let session: PlaybackSession
     @Environment(AppModel.self) private var model
+    @Environment(\.dismissWindow) private var dismissWindow
     @State private var window: NSWindow?
     @State private var keyMonitor = KeyMonitor()
     @State private var controlsVisible = true
@@ -165,7 +166,10 @@ private struct PlayerScreen: View {
                 return PlayerCommands.perform(command, session: session, window: window)
             }
         }
-        .onDisappear { keyMonitor.stop() }
+        .onDisappear {
+            keyMonitor.stop()
+            dismissWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.episodes)
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
             if let window, note.object as? NSWindow === window { model.activeSession = session }
         }
@@ -515,7 +519,7 @@ private struct ControlBar: View {
                         .disabled(session.nextItem == nil)
                         .opacity(session.nextItem == nil ? 0.35 : 1)
                     }
-                    HStack(spacing: compact ? 6 : 8) {
+                    HStack(spacing: compact ? 2 : 8) {
                         Spacer()
                         speedMenu(compact: compact)
                         if !compact { separator }
@@ -526,9 +530,14 @@ private struct ControlBar: View {
                              label: window?.styleMask.contains(.fullScreen) == true ? "退出全屏（回车）" : "全屏（回车）") {
                             window?.toggleFullScreen(nil)
                         }
-                        PlayerControlButton(systemName: "list.bullet", size: 17, label: "打开字幕窗口") {
+                        PlayerControlButton(systemName: "text.bubble.fill", size: 17, label: "打开字幕与学习") {
                             openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                         }
+                        PlayerControlButton(systemName: "list.bullet", size: 17, label: "选集") {
+                            openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.episodes)
+                        }
+                        .disabled(session.siblings.isEmpty)
+                        .opacity(session.siblings.isEmpty ? 0.35 : 1)
                     }
                 }
                 .frame(height: 44)
@@ -558,7 +567,7 @@ private struct ControlBar: View {
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
             }
             .font(.system(size: 12, weight: .medium))
-            .frame(width: compact ? 54 : 64, height: 34)
+            .frame(width: compact ? 46 : 64, height: 34)
             .background(.white.opacity(speedHovered ? 0.16 : 0), in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }

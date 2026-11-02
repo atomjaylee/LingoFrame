@@ -207,9 +207,6 @@ struct LookupCard: View {
 struct LearningPanel: View {
     @Bindable var session: PlaybackSession
     let hide: () -> Void
-    @State private var tab = Tab.transcript
-
-    enum Tab: String { case transcript, episodes }
 
     private var currentLine: Int? {
         session.activeLine ?? session.primaryCues.indices.first
@@ -227,30 +224,25 @@ struct LearningPanel: View {
                     .padding(.horizontal, 18)
                     .padding(.bottom, 8)
             }
-            if tab == .transcript {
-                if session.subtitleMode == .off {
-                    ContentUnavailableView("学习字幕已隐藏", systemImage: "captions.bubble")
-                        .frame(maxWidth: .infinity, minHeight: 270, maxHeight: .infinity)
-                } else {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("前后文")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 18)
-                        TranscriptList(session: session, currentLine: currentLine)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(minHeight: 270, maxHeight: .infinity)
-                }
-
-                if session.subtitleMode != .off, let currentLine, session.primaryCues.indices.contains(currentLine) {
-                    CurrentSentence(session: session, line: currentLine, cue: session.primaryCues[currentLine])
-                }
-                StudyControls(session: session)
+            if session.subtitleMode == .off {
+                ContentUnavailableView("学习字幕已隐藏", systemImage: "captions.bubble")
+                    .frame(maxWidth: .infinity, minHeight: 270, maxHeight: .infinity)
             } else {
-                EpisodeList(session: session)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("前后文")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 18)
+                    TranscriptList(session: session, currentLine: currentLine)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minHeight: 270, maxHeight: .infinity)
             }
+
+            if session.subtitleMode != .off, let currentLine, session.primaryCues.indices.contains(currentLine) {
+                CurrentSentence(session: session, line: currentLine, cue: session.primaryCues[currentLine])
+            }
+            StudyControls(session: session)
         }
         .foregroundStyle(.white)
         .environment(\.colorScheme, .dark)
@@ -294,26 +286,16 @@ struct LearningPanel: View {
 
     private var toolbar: some View {
         HStack(spacing: 12) {
-            if tab == .episodes {
-                Button { tab = .transcript } label: { Label("返回字幕", systemImage: "chevron.left") }
-                    .buttonStyle(.plain).clickablePointer()
-                Spacer()
-            } else {
-                Picker("学习字幕", selection: $session.subtitleMode) {
-                    Text("英文").tag(SubtitleMode.primaryOnly)
-                    Text("双语").tag(SubtitleMode.bilingual)
-                    Text("遮挡").tag(SubtitleMode.blurPrimary)
-                    Text("隐藏").tag(SubtitleMode.off)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .help("只切换学习窗口的字幕显示方式，不影响视频字幕")
+            Picker("学习字幕", selection: $session.subtitleMode) {
+                Text("英文").tag(SubtitleMode.primaryOnly)
+                Text("双语").tag(SubtitleMode.bilingual)
+                Text("遮挡").tag(SubtitleMode.blurPrimary)
+                Text("隐藏").tag(SubtitleMode.off)
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .help("只切换学习窗口的字幕显示方式，不影响视频字幕")
             Menu {
-                if !session.siblings.isEmpty {
-                    Button("分集") { tab = .episodes }
-                    Divider()
-                }
                 Menu("主字幕") {
                     ForEach(session.subtitleOptions) { option in
                         Button { session.selectPrimarySubtitle(option) } label: {
@@ -342,7 +324,7 @@ struct LearningPanel: View {
                     .contentShape(Rectangle())
             }
             .menuStyle(.button).buttonStyle(.plain).clickablePointer().menuIndicator(.hidden)
-            .accessibilityLabel("字幕设置与分集")
+            .accessibilityLabel("字幕设置")
         }
         .font(.system(size: 12, weight: .medium))
         .padding(.horizontal, 18)
@@ -652,41 +634,5 @@ struct EpisodeArtwork: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .accessibilityHidden(true)
-    }
-}
-
-private struct EpisodeList: View {
-    let session: PlaybackSession
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(session.siblings) { ep in
-                        let isCurrent = ep.id == session.item?.id
-                        Button {
-                            if !isCurrent { Task { await session.play(itemID: ep.id, resume: true) } }
-                        } label: {
-                            HStack(spacing: 12) {
-                                EpisodeArtwork(episode: ep, client: session.client, isCurrent: isCurrent)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(ep.episodeCode ?? "").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                                    Text(ep.displayName).font(.system(size: 14, weight: isCurrent ? .semibold : .regular)).lineLimit(2)
-                                }
-                                Spacer()
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(isCurrent ? Color.white.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain).clickablePointer()
-                        .id(ep.id)
-                    }
-                }
-            }
-            .scrollIndicators(.never)
-            .onAppear { proxy.scrollTo(session.item?.id, anchor: .center) }
-        }
     }
 }
