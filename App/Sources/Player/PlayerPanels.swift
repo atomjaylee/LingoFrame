@@ -55,7 +55,7 @@ private struct TranscriptFloatingPanel: View {
         panel.isOpaque = true
         panel.backgroundColor = NSColor(white: 0.075, alpha: 1)
         panel.hasShadow = true
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false
         panel.contentMinSize = NSSize(width: 380, height: 660)
 
         guard !positioned,
