@@ -11,7 +11,6 @@ struct ItemDetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.contentLeadingInset) private var inset
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
 
     @State private var info: TMDBTitle?
     @State private var full: EmbyItem?
@@ -74,15 +73,6 @@ struct ItemDetailView: View {
         }
         .background(RexChrome.detailBase.color.ignoresSafeArea())
         .environment(\.colorScheme, .dark)
-        .overlay(alignment: .topLeading) {
-            Button { dismiss() } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(RexBackButtonStyle())
-                .accessibilityLabel("返回")
-                .padding(.leading, inset)
-                .padding(.top, 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .ignoresSafeArea()
-        }
         .overlay(alignment: .bottom) {
             if let errorMessage { ErrorBanner(message: errorMessage) { self.errorMessage = nil } }
         }

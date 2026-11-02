@@ -73,11 +73,13 @@ struct MainShell: View {
                 .accessibilityHidden(collapsed)
                 .animation(sidebarAnimation, value: collapsed)
 
-            WindowChromeControls(window: window, collapsed: collapsed) {
+            WindowChromeControls(window: window, collapsed: collapsed, goBack: path.isEmpty ? nil : {
+                if !path.isEmpty { path.removeLast() }
+            }) {
                 collapsed.toggle()
             }
             .padding(.leading, 22)
-            .padding(.top, 17)
+            .padding(.top, 15)
             .ignoresSafeArea(edges: .top)
             .animation(sidebarAnimation, value: collapsed)
         }
@@ -242,6 +244,7 @@ private struct WindowTrafficLights: View {
 private struct WindowChromeControls: View {
     let window: NSWindow?
     let collapsed: Bool
+    let goBack: (() -> Void)?
     let toggleSidebar: () -> Void
 
     var body: some View {
@@ -267,7 +270,14 @@ private struct WindowChromeControls: View {
             }
             .buttonStyle(ClickablePlainButtonStyle())
             .accessibilityLabel(collapsed ? "展开侧边栏" : "收起侧边栏")
+
+            if let goBack {
+                Button(action: goBack) { Image(systemName: "chevron.left") }
+                    .buttonStyle(RexBackButtonStyle())
+                    .accessibilityLabel("返回")
+            }
         }
+        .frame(height: 32)
     }
 }
 

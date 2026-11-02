@@ -156,18 +156,12 @@ struct ServerLibrariesView: View {
     let serverID: String
     @Environment(AppModel.self) private var model
     @Environment(\.contentLeadingInset) private var inset
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let server = model.server(serverID)
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                HStack(spacing: 14) {
-                    Button { dismiss() } label: { Image(systemName: "chevron.left") }
-                        .buttonStyle(RexBackButtonStyle())
-                        .accessibilityLabel("返回")
-                    Text(server?.name ?? "资源库").font(.system(size: 26, weight: .bold))
-                }
+                Text(server?.name ?? "资源库").font(.system(size: 26, weight: .bold))
                 if let server {
                     if server.libraries.isEmpty {
                         Text(server.state == .offline ? (server.errorMessage ?? "服务器无响应") : "正在读取媒体库…")
