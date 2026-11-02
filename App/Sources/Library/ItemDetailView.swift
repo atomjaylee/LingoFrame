@@ -203,15 +203,13 @@ struct ItemDetailView: View {
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: 16) {
                     ForEach(episodes) { ep in
-                        EpisodeTile(episode: ep, isSelected: ep.id == nextEpisode?.id)
-                            .onTapGesture { selectedEpisodeID = ep.id; play(ep, resume: true) }
-                            .clickablePointer()
-                            .contextMenu {
-                                Button("播放") { selectedEpisodeID = ep.id; play(ep, resume: true) }
-                                Button("从头播放") { selectedEpisodeID = ep.id; play(ep, resume: false) }
-                                Divider()
-                                Button(ep.isPlayed ? "标记为未看" : "标记为已看") { Task { await setPlayed(!ep.isPlayed, ep) } }
-                            }
+                        Button { selectedEpisodeID = ep.id } label: {
+                            EpisodeTile(episode: ep, isSelected: ep.id == nextEpisode?.id)
+                        }
+                        .buttonStyle(ClickablePlainButtonStyle())
+                        .contextMenu {
+                            Button(ep.isPlayed ? "标记为未看" : "标记为已看") { Task { await setPlayed(!ep.isPlayed, ep) } }
+                        }
                     }
                 }
             }
@@ -241,7 +239,6 @@ struct ItemDetailView: View {
                 ForEach(shown, id: \.id) { source in
                     SourceCard(source: source, serverName: model.server(serverID)?.name ?? "Emby", isSelected: source.id == selected?.id)
                         .onTapGesture { sourceID = source.id }
-                        .onTapGesture(count: 2) { play(item, resume: true) }
                         .clickablePointer()
                 }
             }
@@ -396,15 +393,10 @@ struct EpisodeTile: View {
                             .foregroundStyle(.white, RexChrome.confirm.color).padding(6)
                     }
                 }
-                .overlay {
-                    if isHovered {
-                        Image(systemName: "play.circle.fill").font(.system(size: 34)).foregroundStyle(.white).shadow(radius: 4)
-                    }
-                }
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(.white.opacity(isSelected ? 0.9 : 0), lineWidth: 2)
+                        .strokeBorder(.white.opacity(isSelected ? 0.9 : isHovered ? 0.35 : 0), lineWidth: 2)
                 }
             Text([episode.episodeCode, episode.name].compactMap { $0 }.joined(separator: " · "))
                 .font(.system(size: 14, weight: .semibold)).lineLimit(1)
@@ -459,7 +451,7 @@ struct SourceCard: View {
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
             .strokeBorder(.white.opacity(isSelected ? 0.75 : 0.16), lineWidth: 1.5))
         .contentShape(RoundedRectangle(cornerRadius: 14))
-        .help("点一下查看这个版本的音视频信息，双击播放")
+        .help("点一下查看这个版本的音视频信息")
     }
 }
 
