@@ -128,7 +128,8 @@ private struct InfoRow: View {
 
 // MARK: - 分集
 
-private struct EpisodesPanel: View {
+struct EpisodesPanel: View {
+    var onClose: (() -> Void)? = nil
     @Environment(PlaybackSession.self) private var session: PlaybackSession?
     @Environment(\.theme) private var theme
     @Environment(\.dismissWindow) private var dismissWindow
@@ -139,10 +140,9 @@ private struct EpisodesPanel: View {
                 Text("选集").font(.system(size: 16, weight: .semibold))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
-                    .gesture(WindowDragGesture())
-                    .allowsWindowActivationEvents()
                 Button {
-                    dismissWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.episodes)
+                    if let onClose { onClose() }
+                    else { dismissWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.episodes) }
                 } label: {
                     Image(systemName: "xmark")
                         .frame(width: 26, height: 26)
@@ -172,12 +172,14 @@ private struct EpisodesPanel: View {
                 NoSessionView()
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func row(_ ep: EmbyItem, session: PlaybackSession) -> some View {
         let isCurrent = ep.id == session.item?.id
         return Button {
             if !isCurrent { Task { await session.play(itemID: ep.id, resume: true) } }
+            onClose?()
         } label: {
             HStack(spacing: theme.metrics.space(3)) {
                 EpisodeArtwork(episode: ep, client: session.client, isCurrent: isCurrent)

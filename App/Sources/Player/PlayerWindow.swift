@@ -127,7 +127,6 @@ private extension PlayRequest {
 private struct PlayerScreen: View {
     let session: PlaybackSession
     @Environment(AppModel.self) private var model
-    @Environment(\.dismissWindow) private var dismissWindow
     @State private var window: NSWindow?
     @State private var keyMonitor = KeyMonitor()
     @State private var controlsVisible = true
@@ -138,6 +137,7 @@ private struct PlayerScreen: View {
     @State private var overControls = false
     @State private var menuTracking = false
     @State private var fittedVideoSize: CGSize = .zero
+    @State private var showsEpisodes = false
 
     var body: some View {
         ZStack {
@@ -148,6 +148,7 @@ private struct PlayerScreen: View {
                 Color.black
             }
             stage
+            episodesDrawer
         }
         .background(Color.black)
         .environment(session)
@@ -161,15 +162,17 @@ private struct PlayerScreen: View {
             // 标题栏跟播放画面一样用深色。
             window.appearance = NSAppearance(named: .darkAqua)
             keyMonitor.start(window: window) { chord in
+                if chord == KeyChord("escape"), showsEpisodes {
+                    showsEpisodes = false
+                    return true
+                }
                 guard let command = model.bindings.command(for: chord) else { return false }
                 poke()
                 return PlayerCommands.perform(command, session: session, window: window)
             }
         }
-        .onDisappear {
-            keyMonitor.stop()
-            dismissWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.episodes)
-        }
+        .onDisappear { keyMonitor.stop() }
+        .onChange(of: showsEpisodes) { _, _ in poke() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
             if let window, note.object as? NSWindow === window { model.activeSession = session }
         }
@@ -268,7 +271,7 @@ private struct PlayerScreen: View {
                 .opacity(controlsVisible ? 1 : 0)
                 .offset(y: controlsVisible ? 0 : -6)
                 Spacer(minLength: 0)
-                ControlBar(session: session, isScrubbing: $isScrubbing, window: window)
+                ControlBar(session: session, isScrubbing: $isScrubbing, showsEpisodes: $showsEpisodes, window: window)
                     .onHover {
                         overControls = $0
                         if $0 { hideTask?.cancel() } else { scheduleHide(after: 0.7) }
@@ -297,6 +300,30 @@ private struct PlayerScreen: View {
         }
     }
 
+    private var episodesDrawer: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .trailing) {
+                if showsEpisodes {
+                    Color.black.opacity(0.28)
+                        .onTapGesture { showsEpisodes = false }
+                        .transition(.opacity)
+                    EpisodesPanel(onClose: { showsEpisodes = false })
+                        .frame(width: min(360, geometry.size.width / 2))
+                        .frame(maxHeight: .infinity)
+                        .background(Color(white: 0.075).opacity(0.94))
+                        .background(.ultraThinMaterial)
+                        .overlay(alignment: .leading) { Rectangle().fill(.white.opacity(0.12)).frame(width: 1) }
+                        .shadow(color: .black.opacity(0.3), radius: 20, x: -8)
+                        .transition(.move(edge: .trailing))
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .trailing)
+            .clipped()
+        }
+        .animation(.spring(response: 0.34, dampingFraction: 0.92), value: showsEpisodes)
+        .allowsHitTesting(showsEpisodes)
+    }
+
     /// 鼠标在画面上移动或按了快捷键：显示控制条，1.1 秒没动静再淡出。
     /// 鼠标停在控制面板上时不隐藏；暂停时只要鼠标还在画面上也不隐藏。字幕一直显示。
     private func poke() {
@@ -308,7 +335,7 @@ private struct PlayerScreen: View {
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(for: .seconds(seconds))
-            guard !Task.isCancelled, !isScrubbing, !menuTracking else { return }
+            guard !Task.isCancelled, !isScrubbing, !menuTracking, !showsEpisodes else { return }
             if mouseInside {
                 guard session.engine.state == .playing, !overControls else { return }
                 controlsVisible = false
@@ -475,6 +502,7 @@ private struct CloseButton: View {
 private struct ControlBar: View {
     let session: PlaybackSession
     @Binding var isScrubbing: Bool
+    @Binding var showsEpisodes: Bool
     let window: NSWindow?
     @Environment(\.openWindow) private var openWindow
     @State private var speedHovered = false
@@ -534,7 +562,7 @@ private struct ControlBar: View {
                             openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                         }
                         PlayerControlButton(systemName: "list.bullet", size: 17, label: "选集") {
-                            openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.episodes)
+                            showsEpisodes.toggle()
                         }
                         .disabled(session.siblings.isEmpty)
                         .opacity(session.siblings.isEmpty ? 0.35 : 1)
