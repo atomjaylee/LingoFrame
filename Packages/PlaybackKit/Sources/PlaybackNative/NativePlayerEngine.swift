@@ -92,9 +92,12 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
 
     @ObservationIgnored private var cancellables: Set<AnyCancellable> = []
     @ObservationIgnored private var nativeCues: [NativeCue] = []
+    @ObservationIgnored private var learningNativeCues: [NativeCue] = []
     @ObservationIgnored private var nativeSubtitlesVisible = true
     @ObservationIgnored private var bitmapRecognitionEnabled = false
     @ObservationIgnored private var bitmapRecognitionLanguage: String?
+    @ObservationIgnored private var bitmapRecognitionTrackID: Int?
+    @ObservationIgnored private var activeLearningSubtitleID: Int?
     @ObservationIgnored private var recognizedBitmapCueIDs: Set<Int> = []
     @ObservationIgnored private var bitmapRecognitionGeneration: UInt64 = 0
     @ObservationIgnored private var bitmapRecognitionTask: Task<Void, Never>?
@@ -123,6 +126,8 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         if startupStartedAt == nil { beginStartupMeasurement(context: "直接加载") }
         // 保留会话在起播前设置的识别开关，只清理上一段字幕的识别结果。
         resetBitmapSubtitleRecognition(disable: false)
+        learningNativeCues = []
+        activeLearningSubtitleID = nil
         lastError = nil
         state = .loading
         let options = LoadOptions(
@@ -133,6 +138,7 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
             escalatesToSoftwarePath: true)
         do {
             try await backend.load(url: source.url, startPosition: source.startAt, options: options)
+            startLearningSubtitleChannel()
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -187,7 +193,7 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
 
     public func selectSubtitle(_ id: Int?) {
         if id != selectedSubtitleID {
-            resetBitmapSubtitleRecognition(disable: false)
+            if bitmapRecognitionTrackID == nil { resetBitmapSubtitleRecognition(disable: false) }
             nativeCues = []
             currentSubtitleText = nil
             currentSubtitleImages = []
@@ -199,15 +205,41 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     }
 
     /// 图形字幕没有文本流时，按需启用本机 OCR；默认关闭，避免普通观影承担识别开销。
-    public func setBitmapSubtitleRecognitionEnabled(_ enabled: Bool, language: String? = nil) {
+    public func setBitmapSubtitleRecognitionEnabled(_ enabled: Bool, language: String? = nil, trackID: Int? = nil) {
         guard enabled else {
+            pauseBitmapSubtitleRecognition()
             resetBitmapSubtitleRecognition(disable: true)
             return
         }
+        if bitmapRecognitionTrackID != trackID {
+            pauseBitmapSubtitleRecognition()
+            resetBitmapSubtitleRecognition(disable: false)
+        }
+        bitmapRecognitionTrackID = trackID
         bitmapRecognitionEnabled = true
         bitmapRecognitionLanguage = language
+        startLearningSubtitleChannel()
         mergeDecodedTextSubtitleCues()
         scheduleBitmapSubtitleRecognition()
+    }
+
+    /// 学习窗口关闭时停止识别和独立取轨，保留结果供下次打开复用。
+    public func pauseBitmapSubtitleRecognition() {
+        bitmapRecognitionEnabled = false
+        bitmapRecognitionGeneration &+= 1
+        bitmapRecognitionTask?.cancel()
+        bitmapRecognitionTask = nil
+        isRecognizingBitmapSubtitles = false
+        if activeLearningSubtitleID != nil { backend.clearSecondarySubtitle() }
+        activeLearningSubtitleID = nil
+    }
+
+    private func startLearningSubtitleChannel() {
+        guard bitmapRecognitionEnabled, let id = bitmapRecognitionTrackID,
+              subtitleOptions.contains(where: { $0.id == id }),
+              activeLearningSubtitleID != id || !backend.isSecondarySubtitleActive else { return }
+        activeLearningSubtitleID = id
+        backend.selectSecondarySubtitleTrack(index: id)
     }
 
     public func setNativeSubtitlesVisible(_ visible: Bool) {
@@ -315,6 +347,7 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
             if selectedSubtitleID == nil, let automatic = tracks.first(where: \.isDefault) ?? tracks.first {
                 selectSubtitle(automatic.id)
             }
+            startLearningSubtitleChannel()
         }.store(in: &cancellables)
         backend.$activeAudioTrackIndex.sink { [weak self] in self?.selectedAudioID = $0 }.store(in: &cancellables)
         backend.$activeSubtitleTrackIndex.sink { [weak self] id in
@@ -322,17 +355,21 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
             selectedSubtitleID = id
             nativeSubtitleDescription = subtitleOptions.first(where: { $0.id == id })?.title
         }.store(in: &cancellables)
-        backend.$subtitleCues.sink { [weak self] cues in
+        Publishers.CombineLatest(backend.$subtitleCues, backend.$secondarySubtitleCues).sink { [weak self] primary, secondary in
             guard let self else { return }
-            nativeCues = cues.map { cue in
-                let image: NativeSubtitleImage? = if case .image(let value) = cue.body {
-                    NativeSubtitleImage(id: cue.id, cgImage: value.cgImage,
-                                        position: value.position, canvasSize: value.canvasSize)
-                } else {
-                    nil
+            for (isLearning, cues) in [(false, primary), (true, secondary)] {
+                let mapped = cues.map { cue in
+                    let image: NativeSubtitleImage? = if case .image(let value) = cue.body {
+                        NativeSubtitleImage(id: cue.id, cgImage: value.cgImage,
+                                            position: value.position, canvasSize: value.canvasSize)
+                    } else {
+                        nil
+                    }
+                    return NativeCue(id: cue.id, startTime: cue.startTime, endTime: cue.endTime,
+                                     text: cue.text, image: image)
                 }
-                return NativeCue(id: cue.id, startTime: cue.startTime, endTime: cue.endTime,
-                                 text: cue.text, image: image)
+                if isLearning { learningNativeCues = mapped }
+                else { nativeCues = mapped }
             }
             updateSubtitle(at: currentTime)
             mergeDecodedTextSubtitleCues()
@@ -344,7 +381,7 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     private func mergeDecodedTextSubtitleCues() {
         guard bitmapRecognitionEnabled else { return }
         var merged = Dictionary(uniqueKeysWithValues: recognizedSubtitleCues.map { ($0.id, $0) })
-        for cue in nativeCues {
+        for cue in bitmapRecognitionTrackID == nil ? nativeCues : learningNativeCues {
             guard let text = cue.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { continue }
             merged[cue.id] = RecognizedNativeSubtitleCue(
                 id: cue.id, startTime: cue.startTime, endTime: cue.endTime, text: text)
@@ -357,7 +394,7 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     private func scheduleBitmapSubtitleRecognition() {
         guard bitmapRecognitionEnabled, !isRecognizingBitmapSubtitles else { return }
         let now = currentTime
-        let pending = nativeCues
+        let pending = (bitmapRecognitionTrackID == nil ? nativeCues : learningNativeCues)
             .filter { $0.image != nil && !recognizedBitmapCueIDs.contains($0.id) }
             .sorted {
                 let aFuture = $0.endTime >= now
@@ -375,9 +412,10 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
             for cue in pending {
                 guard !Task.isCancelled, generation == bitmapRecognitionGeneration,
                       let image = cue.image?.cgImage else { break }
+                let text = await BitmapSubtitleRecognizer.recognize(image, language: language)
+                guard !Task.isCancelled, generation == bitmapRecognitionGeneration else { break }
                 recognizedBitmapCueIDs.insert(cue.id)
-                guard let text = await BitmapSubtitleRecognizer.recognize(image, language: language),
-                      !Task.isCancelled, generation == bitmapRecognitionGeneration else { continue }
+                guard let text else { continue }
                 let item = RecognizedNativeSubtitleCue(
                     id: cue.id, startTime: cue.startTime, endTime: cue.endTime, text: text)
                 let insertIndex = recognizedSubtitleCues.firstIndex { $0.startTime > item.startTime }
@@ -401,6 +439,8 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         if disable {
             bitmapRecognitionEnabled = false
             bitmapRecognitionLanguage = nil
+            bitmapRecognitionTrackID = nil
+            activeLearningSubtitleID = nil
         }
     }
 

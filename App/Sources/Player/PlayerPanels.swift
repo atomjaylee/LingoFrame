@@ -26,6 +26,7 @@ private struct TranscriptFloatingPanel: View {
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var positioned = false
     @State private var keyMonitor = KeyMonitor()
+    @State private var panelWindow: NSWindow?
 
     var body: some View {
         Group {
@@ -42,10 +43,14 @@ private struct TranscriptFloatingPanel: View {
             if hasEnded { dismissWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript) }
         }
         .onDisappear { keyMonitor.stop() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
+            if let panelWindow, note.object as? NSWindow === panelWindow { session?.setLearningPanelVisible(false) }
+        }
     }
 
     private func configure(_ panel: NSWindow?, session: PlaybackSession) {
         guard let panel else { return }
+        if panelWindow !== panel { panelWindow = panel }
         panel.titleVisibility = .hidden
         // 沿用 SwiftUI 隐藏标题栏的窗口样式，保留原生焦点和缩放能力。
         panel.titlebarAppearsTransparent = true

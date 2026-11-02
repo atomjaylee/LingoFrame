@@ -61,24 +61,21 @@ final class PlaybackSession {
     private(set) var secondarySubtitle: SubtitleOption?
     private(set) var primaryCues: [SubtitleCue] = []
     private(set) var secondaryCues: [SubtitleCue] = []
-    /// 当前播放器选择的是图形字幕或无法导出的字幕时，画面交给原生字幕，学习面板仍保留文本轨。
-    private(set) var usesNativePlaybackSubtitles = false
+    private(set) var isLearningPanelVisible = false
+    private var bitmapLearningSubtitle: SubtitleOption?
     /// 没有可用字幕时的说明，比如「这个片源只有图形字幕」。
     private(set) var subtitleNote: String?
     private(set) var translationNote: String?
     var subtitleMode: SubtitleMode = .primaryOnly {
         didSet {
-            if subtitleMode == .bilingual, oldValue != .bilingual { prepareBilingualSubtitles() }
             if subtitleMode != .bilingual { translationNote = nil }
-            updateNativeSubtitleVisibility()
+            if oldValue != subtitleMode { updateLearningActivity() }
         }
     }
     /// 当前句在主字幕里的序号，每 0.1 秒按播放位置更新，只有换句时才变。
     private(set) var currentLine: Int?
     /// 学习面板高亮的句子序号：句间空档保持在上一句，仅在句子边界变化时更新，避免界面高频读取播放时钟。
     private(set) var activeLine: Int?
-    /// 副字幕（中文）里和当前时间重叠的那一条。
-    private(set) var currentSecondary: String?
     /// 单句循环：每句重复几遍再进入下一句（关 / 3 遍 / 5 遍 / 一直）。换集时保留。
     var loopMode: LoopMode = .off {
         didSet { loopPass = 1 }
@@ -101,6 +98,7 @@ final class PlaybackSession {
     @ObservationIgnored private var seekFeedbackTask: Task<Void, Never>?
     @ObservationIgnored private var usesBitmapSubtitleRecognition = false
     @ObservationIgnored private var lastRecognizedBitmapCueID: Int?
+    @ObservationIgnored private var lastRecognizedBitmapCueCount = 0
     @ObservationIgnored private var translatedCues: [SubtitleCue: String] = [:]
     @ObservationIgnored private var reportedStart = false
     @ObservationIgnored private var lastRequest: PlayRequest?
@@ -211,7 +209,7 @@ final class PlaybackSession {
             let start = resume ? item.resumePositionSeconds : nil
             let stream = try client.resolveOriginalStream(itemID: itemID, info: info)
             self.stream = stream
-            loadSubtitles(itemID: item.id, source: stream.mediaSource)
+            loadSubtitles(source: stream.mediaSource)
             playMode = "Apple 原生显示管线"
             log.info("播放 \(itemID, privacy: .public) 路线 Apple 原生显示")
             mark("开始播放器")
@@ -251,7 +249,7 @@ final class PlaybackSession {
         item = prepared.item
         stream = prepared.stream
         let start = resume ? prepared.startAt : nil
-        loadSubtitles(itemID: prepared.item.id, source: prepared.stream.mediaSource)
+        loadSubtitles(source: prepared.stream.mediaSource)
         playMode = prepared.isPrewarmed ? "Apple 原生显示管线（预热命中）" : "Apple 原生显示管线（元数据命中）"
         do {
             try await engine.load(url: prepared.stream.url, id: prepared.item.id,
@@ -323,13 +321,12 @@ final class PlaybackSession {
         ticker = nil
         currentLine = nil
         activeLine = nil
-        currentSecondary = nil
         subtitleOptions = []
         primarySubtitle = nil
         secondarySubtitle = nil
         primaryCues = []
         secondaryCues = []
-        usesNativePlaybackSubtitles = false
+        bitmapLearningSubtitle = nil
         usesBitmapSubtitleRecognition = false
         lastRecognizedBitmapCueID = nil
         subtitleNote = nil
@@ -371,8 +368,8 @@ final class PlaybackSession {
 
     // MARK: 字幕
 
-    /// 自动挑字幕：文本字幕由 Emby 在后台导出，不阻塞首帧；图形字幕由原生播放层显示但不参与逐句学习。
-    private func loadSubtitles(itemID: String, source: MediaSourceInfo) {
+    /// 只准备学习字幕的选项，识别和读取等到学习窗口打开后再启动。
+    private func loadSubtitles(source: MediaSourceInfo) {
         engine.setNativeSubtitlesVisible(true)
         let options = Self.textSubtitleOptions(from: source)
         subtitleOptions = options
@@ -381,21 +378,45 @@ final class PlaybackSession {
         primarySubtitle = primary
         secondarySubtitle = nil
         subtitleMode = .primaryOnly
-        usesNativePlaybackSubtitles = primary == nil
+        let bitmap = source.subtitleStreams.first { Self.normalizedSubtitleLanguage($0.language) == "en" && $0.isForced != true }
+            ?? source.subtitleStreams.first { $0.isForced != true }
+        bitmapLearningSubtitle = primary == nil ? bitmap.flatMap { track in
+            track.index.map { SubtitleOption(id: $0, title: track.displayTitle ?? track.language ?? "字幕 \($0)",
+                                            language: track.language, isText: false, isForced: false) }
+        } : nil
+        updateLearningActivity()
+    }
+
+    func setLearningPanelVisible(_ visible: Bool) {
+        guard isLearningPanelVisible != visible else { return }
+        isLearningPanelVisible = visible
+        updateLearningActivity()
+    }
+
+    private var isLearningActive: Bool { isLearningPanelVisible && subtitleMode != .off }
+
+    private func updateLearningActivity() {
+        guard isLearningActive else {
+            subtitleTask?.cancel()
+            engine.pauseBitmapSubtitleRecognition()
+            return
+        }
+        guard let item, let stream else { return }
+        let primary = primarySubtitle
         if primary == nil {
-            if source.subtitleStreams.isEmpty {
-                subtitleNote = "这个片源没有字幕"
-                updateNativeSubtitleVisibility()
+            if let bitmap = bitmapLearningSubtitle {
+                enableBitmapSubtitleRecognition(language: bitmap.language)
             } else {
-                let language = engine.subtitleOptions.first(where: { $0.id == engine.selectedSubtitleID })?.language
-                    ?? source.subtitleStreams.first?.language
-                enableBitmapSubtitleRecognition(language: language)
+                subtitleNote = "这个片源没有字幕"
             }
-        } else {
+        } else if primaryCues.isEmpty {
             disableBitmapSubtitleRecognition()
             subtitleNote = "正在读取字幕…"
-            selectSubtitles(primary: primary, secondary: nil, itemID: itemID, sourceID: source.id)
+            selectSubtitles(primary: primary, secondary: secondarySubtitle, itemID: item.id, sourceID: stream.mediaSource.id)
+        } else if let secondary = secondarySubtitle, secondaryCues.isEmpty {
+            selectSubtitles(primary: primary, secondary: secondary, itemID: item.id, sourceID: stream.mediaSource.id)
         }
+        if subtitleMode == .bilingual { prepareBilingualSubtitles() }
     }
 
     func selectPrimarySubtitle(_ option: SubtitleOption?) {
@@ -412,7 +433,7 @@ final class PlaybackSession {
     }
 
     private func prepareBilingualSubtitles() {
-        guard secondarySubtitle == nil, let item, let stream else { return }
+        guard isLearningActive, secondarySubtitle == nil, let item, let stream else { return }
         if let chinese = subtitleOptions.first(where: { $0.isChinese && $0 != primarySubtitle }) {
             translationNote = "正在读取中文字幕…"
             selectSubtitles(primary: primarySubtitle, secondary: chinese,
@@ -423,13 +444,12 @@ final class PlaybackSession {
     }
 
     var needsSystemTranslation: Bool {
-        let language = engine.subtitleOptions.first { $0.id == engine.selectedSubtitleID }?.language
-        let isEnglish = primarySubtitle?.isEnglish ?? (Self.normalizedSubtitleLanguage(language) == "en")
-        return subtitleMode == .bilingual && secondarySubtitle == nil && isEnglish && !primaryCues.isEmpty
+        let isEnglish = primarySubtitle?.isEnglish ?? bitmapLearningSubtitle?.isEnglish ?? false
+        return isLearningActive && subtitleMode == .bilingual && secondarySubtitle == nil && isEnglish && !primaryCues.isEmpty
     }
 
     var systemTranslationID: String? {
-        needsSystemTranslation ? "\(loadGeneration)|\(primarySubtitle?.id ?? engine.selectedSubtitleID ?? -1)" : nil
+        needsSystemTranslation ? "\(loadGeneration)|\(primarySubtitle?.id ?? bitmapLearningSubtitle?.id ?? -1)" : nil
     }
 
     /// 英文轨没有配套中文时按句翻译，优先当前句及附近句子，并沿用原时间轴。
@@ -471,7 +491,6 @@ final class PlaybackSession {
         secondaryCues = primaryCues.compactMap { cue in
             translatedCues[cue].map { SubtitleCue(range: cue.range, text: $0) }
         }
-        currentSecondary = secondaryCues.cue(at: now)?.text
     }
 
     func translation(for cue: SubtitleCue) -> String? {
@@ -483,63 +502,6 @@ final class PlaybackSession {
 
     func selectPlaybackSubtitle(_ id: Int?) {
         engine.selectSubtitle(id)
-        guard let id, let track = engine.subtitleOptions.first(where: { $0.id == id }) else {
-            subtitleTask?.cancel()
-            primaryCues = []
-            secondaryCues = []
-            currentLine = nil
-            activeLine = nil
-            usesNativePlaybackSubtitles = false
-            disableBitmapSubtitleRecognition()
-            subtitleMode = .off
-            subtitleNote = "字幕已关闭"
-            return
-        }
-        if subtitleMode == .off { subtitleMode = .primaryOnly }
-        let learningTrack = matchingLearningTrack(id: id, title: track.title, language: track.language)
-        guard let item, let stream else { return }
-        guard let learningTrack else {
-            usesNativePlaybackSubtitles = true
-            updateNativeSubtitleVisibility()
-            if subtitleOptions.isEmpty {
-                primaryCues = []
-                secondaryCues = []
-                currentLine = nil
-                activeLine = nil
-                enableBitmapSubtitleRecognition(language: track.language)
-            } else if primaryCues.isEmpty, let fallback = preferredLearningTrack() {
-                disableBitmapSubtitleRecognition()
-                subtitleNote = "当前播放字幕不能逐句学习，已为学习面板保留文本字幕"
-                selectSubtitles(primary: fallback, secondary: secondarySubtitle,
-                                itemID: item.id, sourceID: stream.mediaSource.id)
-            } else {
-                subtitleNote = nil
-            }
-            return
-        }
-        usesNativePlaybackSubtitles = false
-        disableBitmapSubtitleRecognition()
-        updateNativeSubtitleVisibility()
-        subtitleNote = "正在准备学习字幕…"
-        selectSubtitles(primary: learningTrack, secondary: secondarySubtitle,
-                        itemID: item.id, sourceID: stream.mediaSource.id)
-    }
-
-    private func matchingLearningTrack(id: Int, title: String, language: String?) -> SubtitleOption? {
-        if let direct = subtitleOptions.first(where: { $0.id == id }) { return direct }
-        let normalized = Self.normalizedSubtitleLanguage(language)
-        if let normalized,
-           let sameLanguage = subtitleOptions.first(where: { Self.normalizedSubtitleLanguage($0.language) == normalized }) {
-            return sameLanguage
-        }
-        return subtitleOptions.first { option in
-            option.title.localizedCaseInsensitiveContains(title)
-                || title.localizedCaseInsensitiveContains(option.title)
-        }
-    }
-
-    private func preferredLearningTrack() -> SubtitleOption? {
-        subtitleOptions.first(where: \.isEnglish) ?? subtitleOptions.first
     }
 
     private nonisolated static func normalizedSubtitleLanguage(_ language: String?) -> String? {
@@ -549,18 +511,11 @@ final class PlaybackSession {
         return value
     }
 
-    private func updateNativeSubtitleVisibility() {
-        let usesRecognizedBilingual = usesBitmapSubtitleRecognition && subtitleMode == .bilingual && !primaryCues.isEmpty
-        engine.setNativeSubtitlesVisible(subtitleMode != .off && !usesRecognizedBilingual
-                                        && (usesNativePlaybackSubtitles || primaryCues.isEmpty))
-    }
-
     private func enableBitmapSubtitleRecognition(language: String?) {
         usesBitmapSubtitleRecognition = true
         lastRecognizedBitmapCueID = nil
         subtitleNote = "正在识别图形字幕…"
-        engine.setBitmapSubtitleRecognitionEnabled(true, language: language)
-        updateNativeSubtitleVisibility()
+        engine.setBitmapSubtitleRecognitionEnabled(true, language: language, trackID: bitmapLearningSubtitle?.id)
         startTicker()
     }
 
@@ -572,24 +527,28 @@ final class PlaybackSession {
     }
 
     private func selectSubtitles(primary: SubtitleOption?, secondary: SubtitleOption?, itemID: String, sourceID: String) {
-        if primary != primarySubtitle { translatedCues = [:] }
+        if primary != primarySubtitle {
+            translatedCues = [:]
+            primaryCues = []
+        }
+        if secondary != secondarySubtitle { secondaryCues = [] }
         primarySubtitle = primary
         secondarySubtitle = secondary
         subtitleTask?.cancel()
+        guard isLearningActive else { return }
         subtitleTask = Task { [weak self] in
             guard let self, let client = self.client else { return }
             async let p = Self.fetchCues(client, itemID, sourceID, primary)
             async let s = Self.fetchCues(client, itemID, sourceID, secondary)
             let (primaryResult, secondaryResult) = await (p, s)
             guard !Task.isCancelled else { return }
-            self.primaryCues = primaryResult ?? []
+            if primary != nil { self.primaryCues = primaryResult ?? [] }
             self.secondaryCues = secondaryResult ?? []
             if secondary == nil { self.applyTranslatedCues() }
             else { self.translationNote = self.secondaryCues.isEmpty ? "中文字幕读取失败，请在字幕设置中换一条" : nil }
-            self.updateNativeSubtitleVisibility()
             if primary != nil {
-                self.subtitleNote = primaryResult == nil ? "学习字幕读取失败，已由播放器直接显示"
-                    : primaryResult?.isEmpty == true ? "学习字幕无法解析，已由播放器直接显示" : nil
+                self.subtitleNote = primaryResult == nil ? "学习字幕读取失败，视频原字幕不受影响"
+                    : primaryResult?.isEmpty == true ? "学习字幕无法解析，视频原字幕不受影响" : nil
             }
             self.log.info("字幕 主 \(self.primaryCues.count) 条 副 \(self.secondaryCues.count) 条")
             self.startTicker()
@@ -641,7 +600,7 @@ final class PlaybackSession {
         ticker = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                if self.usesBitmapSubtitleRecognition { self.syncRecognizedBitmapSubtitles() }
+                if self.isLearningActive, self.usesBitmapSubtitleRecognition { self.syncRecognizedBitmapSubtitles() }
                 let t = self.now
                 if self.loopEnabled, let line = self.currentLine, self.primaryCues.indices.contains(line),
                    self.engine.state == .playing, t >= self.primaryCues[line].range.end {
@@ -670,8 +629,6 @@ final class PlaybackSession {
                     ?? self.primaryCues.latestIndex(atOrBefore: t)
                     ?? self.primaryCues.indices.first
                 if active != self.activeLine { self.activeLine = active }
-                let secondary = self.secondaryCues.cue(at: t)?.text
-                if secondary != self.currentSecondary { self.currentSecondary = secondary }
                 try? await Task.sleep(for: .milliseconds(100))
             }
         }
@@ -683,14 +640,16 @@ final class PlaybackSession {
             subtitleNote = engine.isRecognizingBitmapSubtitles ? "正在识别图形字幕…" : "等待下一句字幕…"
             return
         }
-        guard recognized.last?.id != lastRecognizedBitmapCueID || recognized.count != primaryCues.count else { return }
+        guard recognized.last?.id != lastRecognizedBitmapCueID || recognized.count != lastRecognizedBitmapCueCount else { return }
         lastRecognizedBitmapCueID = recognized.last?.id
-        primaryCues = recognized.map {
-            SubtitleCue(range: TimeRange(start: MediaTime(seconds: $0.startTime),
-                                         end: MediaTime(seconds: $0.endTime)),
-                        text: $0.text)
+        lastRecognizedBitmapCueCount = recognized.count
+        var merged = Dictionary(primaryCues.map { (SentenceID.derive(start: $0.range.start, text: $0.text), $0) },
+                                uniquingKeysWith: { _, latest in latest })
+        for cue in recognized {
+            let range = TimeRange(start: MediaTime(seconds: cue.startTime), end: MediaTime(seconds: cue.endTime))
+            merged[SentenceID.derive(start: range.start, text: cue.text)] = SubtitleCue(range: range, text: cue.text)
         }
-        updateNativeSubtitleVisibility()
+        primaryCues = merged.values.sorted { $0.range.start < $1.range.start }
         if primaryCues.isEmpty {
             subtitleNote = engine.isRecognizingBitmapSubtitles ? "正在识别图形字幕…" : "等待下一句图形字幕…"
         } else {
@@ -901,7 +860,7 @@ struct SubtitleOption: Identifiable, Hashable, Sendable {
     }
 }
 
-/// 字幕显示方式，对应设计稿底部的「字幕：双语 / 仅英文 / 遮挡英文」。
+/// 学习窗口的显示方式，不改变播放器选择的原字幕。
 enum SubtitleMode: String, CaseIterable, Identifiable {
     case bilingual = "双语"
     case primaryOnly = "仅英文"

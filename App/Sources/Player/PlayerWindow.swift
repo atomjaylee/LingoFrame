@@ -136,7 +136,6 @@ private struct PlayerScreen: View {
     @State private var mouseInside = false
     @State private var overControls = false
     @State private var menuTracking = false
-    @State private var lookup: WordLookup?
     @State private var fittedVideoSize: CGSize = .zero
 
     var body: some View {
@@ -150,7 +149,6 @@ private struct PlayerScreen: View {
             stage
         }
         .background(Color.black)
-        .modifier(SubtitleTranslation(session: session))
         .environment(session)
         .environment(\.colorScheme, .dark)
         .navigationTitle(session.windowTitle)
@@ -223,7 +221,6 @@ private struct PlayerScreen: View {
                 })
                 .simultaneousGesture(TapGesture().onEnded {
                     poke()
-                    if lookup != nil { lookup = nil; return }
                     if let command = model.bindings.command(for: Gesture(.click), on: .video) {
                         _ = PlayerCommands.perform(command, session: session, window: window)
                     }
@@ -253,19 +250,10 @@ private struct PlayerScreen: View {
                 .frame(maxHeight: .infinity, alignment: .bottom)
                 .opacity(controlsVisible ? 1 : 0)
                 .allowsHitTesting(false)
-            SubtitleOverlay(session: session, lookup: $lookup)
+            PlaybackSubtitleOverlay(engine: session.engine)
                 .padding(.horizontal, 64)
                 .frame(maxHeight: .infinity, alignment: .bottom)
                 .padding(.bottom, controlsVisible ? 118 : 40)
-            if let lookup {
-                LookupCard(lookup: lookup) {
-                    self.lookup = nil
-                    session.engine.play()
-                }
-                .frame(maxHeight: .infinity, alignment: .bottom)
-                .padding(.bottom, controlsVisible ? 224 : 140)
-                .transition(.opacity.combined(with: .scale(scale: 0.97)))
-            }
             VStack(spacing: 0) {
                 HStack {
                     CloseButton(window: window)
@@ -291,7 +279,6 @@ private struct PlayerScreen: View {
         .animation(.easeOut(duration: 0.16), value: controlsVisible)
         .animation(.easeOut(duration: 0.15), value: session.hud)
         .animation(.easeOut(duration: 0.15), value: session.seekFeedback)
-        .animation(.easeOut(duration: 0.15), value: lookup)
         .contentShape(Rectangle())
         .onContinuousHover { phase in
             switch phase {
@@ -299,7 +286,7 @@ private struct PlayerScreen: View {
                 mouseInside = true
                 poke()
             case .ended:
-                // 鼠标移出画面：控制条淡出（正在拖进度条或查词时保留）。
+                // 鼠标移出画面：控制条淡出（正在拖进度条时保留）。
                 mouseInside = false
                 scheduleHide(after: 0.12)
             }
@@ -317,7 +304,7 @@ private struct PlayerScreen: View {
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(for: .seconds(seconds))
-            guard !Task.isCancelled, !isScrubbing, !menuTracking, lookup == nil else { return }
+            guard !Task.isCancelled, !isScrubbing, !menuTracking else { return }
             if mouseInside {
                 guard session.engine.state == .playing, !overControls else { return }
                 controlsVisible = false
@@ -612,13 +599,8 @@ private struct ControlBar: View {
         .accessibilityLabel("选择音轨")
     }
 
-    /// 学习字幕由自绘层显示时，以实际主字幕为准，不沿用内核的默认轨道。
     private var currentSubtitleID: Int? {
-        guard session.subtitleMode != .off else { return nil }
-        if !session.usesNativePlaybackSubtitles, !session.primaryCues.isEmpty {
-            return session.primarySubtitle?.id
-        }
-        return engine.selectedSubtitleID
+        engine.selectedSubtitleID
     }
 
     private var subtitleOptions: some View {

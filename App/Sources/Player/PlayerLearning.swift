@@ -11,49 +11,24 @@ import Translation
 
 // MARK: - 字幕层
 
-/// 画面底部的双语字幕：英文 30 号半粗、每个词都能点，中文 18 号在下面。
-struct SubtitleOverlay: View {
-    let session: PlaybackSession
-    @Binding var lookup: WordLookup?
+/// 视频只显示内核当前选中的原字幕，不读取学习窗口的识别和翻译结果。
+struct PlaybackSubtitleOverlay: View {
+    let engine: NativePlayerEngine
 
     var body: some View {
-        let mode = session.subtitleMode
-        let line = session.currentLine.flatMap { session.primaryCues.indices.contains($0) ? session.primaryCues[$0] : nil }
-        if !session.usesNativePlaybackSubtitles || (mode == .bilingual && !session.primaryCues.isEmpty) {
-            VStack(spacing: 8) {
-                if mode != .off, let line {
-                    FlowLayout(spacing: 7, lineSpacing: 4) {
-                        ForEach(Array(Self.words(line.text).enumerated()), id: \.offset) { index, word in
-                            let bare = Self.bare(word)
-                            SubtitleWord(word: word, isSelected: lookup?.index == index && lookup?.word == bare) {
-                                guard !bare.isEmpty else { return }
-                                session.engine.pause()
-                                lookup = WordLookup(word: bare, sentence: line.text, index: index)
-                            }
-                        }
-                    }
-                    .font(.system(size: 28, weight: .semibold))
-                    .multilineTextAlignment(.center)
-                    .blur(radius: mode == .blurPrimary ? 9 : 0)
-                } else if mode != .off, let native = session.engine.currentSubtitleText {
-                    Text(native)
-                        .font(.system(size: 28, weight: .semibold))
-                        .multilineTextAlignment(.center)
-                        .blur(radius: mode == .blurPrimary ? 9 : 0)
-                }
-                if mode == .bilingual, let zh = session.currentSecondary {
-                    Text(zh)
-                        .font(.system(size: 17, weight: .medium))
-                        .multilineTextAlignment(.center)
-                }
-            }
-            .shadow(color: .black.opacity(0.85), radius: 1.5, y: 1)
-            .shadow(color: .black.opacity(0.45), radius: 7)
-            .frame(maxWidth: .infinity)
-            .animation(nil, value: session.currentLine)
+        if let text = engine.currentSubtitleText {
+            Text(text)
+                .font(.system(size: 28, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .shadow(color: .black.opacity(0.85), radius: 1.5, y: 1)
+                .shadow(color: .black.opacity(0.45), radius: 7)
+                .frame(maxWidth: .infinity)
+                .allowsHitTesting(false)
         }
     }
+}
 
+private enum SubtitleText {
     static func words(_ text: String) -> [String] {
         text.split(whereSeparator: \.isWhitespace).map(String.init)
     }
@@ -253,17 +228,22 @@ struct LearningPanel: View {
                     .padding(.bottom, 8)
             }
             if tab == .transcript {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("前后文")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 18)
-                    TranscriptList(session: session, currentLine: currentLine)
+                if session.subtitleMode == .off {
+                    ContentUnavailableView("学习字幕已隐藏", systemImage: "captions.bubble")
+                        .frame(maxWidth: .infinity, minHeight: 270, maxHeight: .infinity)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("前后文")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 18)
+                        TranscriptList(session: session, currentLine: currentLine)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minHeight: 270, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(minHeight: 270, maxHeight: .infinity)
 
-                if let currentLine, session.primaryCues.indices.contains(currentLine) {
+                if session.subtitleMode != .off, let currentLine, session.primaryCues.indices.contains(currentLine) {
                     CurrentSentence(session: session, line: currentLine, cue: session.primaryCues[currentLine])
                 }
                 StudyControls(session: session)
@@ -276,6 +256,9 @@ struct LearningPanel: View {
         .environment(\.colorScheme, .dark)
         .background(Color(white: 0.075).opacity(0.97))
         .background(.ultraThinMaterial)
+        .modifier(SubtitleTranslation(session: session))
+        .onAppear { session.setLearningPanelVisible(true) }
+        .onDisappear { session.setLearningPanelVisible(false) }
     }
 
     private var header: some View {
@@ -316,7 +299,7 @@ struct LearningPanel: View {
                     .buttonStyle(.plain).clickablePointer()
                 Spacer()
             } else {
-                Picker("画面字幕", selection: $session.subtitleMode) {
+                Picker("学习字幕", selection: $session.subtitleMode) {
                     Text("英文").tag(SubtitleMode.primaryOnly)
                     Text("双语").tag(SubtitleMode.bilingual)
                     Text("遮挡").tag(SubtitleMode.blurPrimary)
@@ -324,7 +307,7 @@ struct LearningPanel: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .help("切换播放画面的字幕显示方式")
+                .help("只切换学习窗口的字幕显示方式，不影响视频字幕")
             }
             Menu {
                 if !session.siblings.isEmpty {
@@ -367,7 +350,7 @@ struct LearningPanel: View {
     }
 }
 
-/// 翻译会话挂在播放窗口上，字幕窗口关闭后也能继续生成画面所需的中文。
+/// 翻译会话只存在于学习窗口中，窗口关闭后系统任务随视图取消。
 struct SubtitleTranslation: ViewModifier {
     let session: PlaybackSession
     @State private var configuration: TranslationSession.Configuration?
@@ -432,8 +415,8 @@ private struct CurrentSentence: View {
 
             ScrollView {
                 FlowLayout(spacing: 6, lineSpacing: 4, alignment: .leading) {
-                    ForEach(Array(SubtitleOverlay.words(cue.text).enumerated()), id: \.offset) { index, word in
-                        let bare = SubtitleOverlay.bare(word)
+                    ForEach(Array(SubtitleText.words(cue.text).enumerated()), id: \.offset) { index, word in
+                        let bare = SubtitleText.bare(word)
                         SubtitleWord(word: word, isSelected: lookup?.index == index && lookup?.word == bare) {
                             guard !bare.isEmpty else { return }
                             resumeAfterLookup = session.engine.state == .playing
@@ -444,6 +427,8 @@ private struct CurrentSentence: View {
                     }
                 }
                 .font(.system(size: 27, weight: .bold))
+                .blur(radius: session.subtitleMode == .blurPrimary ? 7 : 0)
+                .allowsHitTesting(session.subtitleMode != .blurPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if showsTranslation, let translation {
                     Text(translation.replacingOccurrences(of: "\n", with: " "))
@@ -618,6 +603,7 @@ private struct TranscriptList: View {
                     .frame(width: 43, alignment: .leading)
                 Text(cue.text.replacingOccurrences(of: "\n", with: " "))
                     .font(.system(size: 14, weight: isCurrent ? .semibold : .regular))
+                    .blur(radius: session.subtitleMode == .blurPrimary ? 5 : 0)
                     .foregroundStyle(isCurrent ? Color.white : .white.opacity(0.64))
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)

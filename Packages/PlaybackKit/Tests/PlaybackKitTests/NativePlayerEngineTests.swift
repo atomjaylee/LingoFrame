@@ -37,6 +37,51 @@ private func waitUntil(timeout: Double = 20, _ condition: () -> Bool) async thro
 @Suite(.serialized)
 struct NativePlayerEngineTests {
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(2)))
+    func learningSubtitleTrackSurvivesVideoTrackChangesAndPause() async throws {
+        let video = try makeTestMKV(duration: 8)
+        let english = video.deletingPathExtension().appendingPathExtension("en.srt")
+        let chinese = video.deletingPathExtension().appendingPathExtension("zh.srt")
+        let muxed = video.deletingPathExtension().appendingPathExtension("dual.mkv")
+        defer {
+            for url in [video, english, chinese, muxed] { try? FileManager.default.removeItem(at: url) }
+        }
+        try "1\n00:00:00,200 --> 00:00:07,500\nHello, welcome back.\n".write(to: english, atomically: true, encoding: .utf8)
+        try "1\n00:00:00,200 --> 00:00:07,500\n你好，欢迎回来。\n".write(to: chinese, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpeg)
+        process.arguments = ["-v", "error", "-i", video.path, "-i", english.path, "-i", chinese.path,
+                             "-map", "0", "-map", "1", "-map", "2", "-c", "copy",
+                             "-metadata:s:s:0", "language=eng", "-disposition:s:0", "default",
+                             "-metadata:s:s:1", "language=zho", muxed.path]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        let engine = try NativePlayerEngine()
+        defer { engine.stop() }
+        try await engine.load(url: muxed, startAt: 1, autoplay: false)
+        try await waitUntil { engine.state == .paused && engine.subtitleOptions.count == 2 }
+        let englishID = try #require(engine.subtitleOptions.first { $0.language == "eng" }?.id)
+        let chineseID = try #require(engine.subtitleOptions.first { $0.language == "zho" }?.id)
+        engine.setBitmapSubtitleRecognitionEnabled(true, language: "eng", trackID: englishID)
+        engine.selectSubtitle(chineseID)
+        try await waitUntil {
+            engine.currentSubtitleText?.contains("你好") == true && !engine.recognizedSubtitleCues.isEmpty
+        }
+        #expect(engine.recognizedSubtitleCues.allSatisfy { $0.text == "Hello, welcome back." })
+        let cached = engine.recognizedSubtitleCues
+        engine.pauseBitmapSubtitleRecognition()
+        #expect(engine.recognizedSubtitleCues == cached)
+        #expect(!engine.isRecognizingBitmapSubtitles)
+        #expect(engine.selectedSubtitleID == chineseID)
+        engine.selectSubtitle(nil)
+        #expect(engine.currentSubtitleText == nil)
+        #expect(engine.recognizedSubtitleCues == cached)
+        engine.setBitmapSubtitleRecognitionEnabled(true, language: "eng", trackID: englishID)
+        #expect(engine.selectedSubtitleID == nil)
+        #expect(engine.recognizedSubtitleCues.contains { $0.text == "Hello, welcome back." })
+    }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(2)))
     func subtitleRecognitionConfiguredBeforeLoadWorksWithoutSwitchingTracks() async throws {
         let video = try makeTestMKV()
         let subtitle = video.deletingPathExtension().appendingPathExtension("srt")
