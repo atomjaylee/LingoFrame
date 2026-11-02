@@ -271,7 +271,7 @@ public struct EmbyClient: Sendable {
             let ext = source.container.map { ".\($0.lowercased())" } ?? ""
             let url = transport.url("Videos/\(itemID)/stream\(ext)", [
                 "Static": "true", "MediaSourceId": source.id, "PlaySessionId": info.playSessionId,
-                "DeviceId": transport.identity.deviceID, "api_key": account.accessToken,
+                "UserId": account.userID, "DeviceId": transport.identity.deviceID, "api_key": account.accessToken,
             ])
             return ResolvedStream(url: url, method: .directPlay, mediaSource: source, playSessionID: info.playSessionId)
         }
@@ -299,6 +299,7 @@ public struct EmbyClient: Sendable {
         let ext = source.container.map { ".\($0.lowercased())" } ?? ""
         let url = transport.url("Videos/\(itemID)/stream\(ext)", [
             "Static": "true", "MediaSourceId": source.id, "api_key": account.accessToken,
+            "UserId": account.userID, "DeviceId": transport.identity.deviceID, "PlaySessionId": info.playSessionId,
         ])
         return ResolvedStream(url: url, method: .directPlay, mediaSource: source, playSessionID: info.playSessionId)
     }

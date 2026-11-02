@@ -158,6 +158,29 @@ private func account(host: String) -> EmbyAccount {
     #expect(directWithoutServerConversion.method == .directPlay)
 }
 
+@Test func videoURLsCarryPlaybackIdentity() throws {
+    let client = EmbyClient(account: account(host: "play.test"), identity: identity)
+    let source = MediaSourceInfo(id: "ms1", container: "mp4", supportsDirectPlay: true)
+    let info = PlaybackInfoResponse(mediaSources: [source], playSessionId: "ps1")
+    let streams = [
+        try client.resolveOriginalStream(itemID: "i1", info: info),
+        try client.resolveStream(itemID: "i1", info: info, profile: .native),
+    ]
+    for stream in streams {
+        let query = try #require(URLComponents(url: stream.url, resolvingAgainstBaseURL: false)?.queryItems)
+        for (name, value) in ["UserId": "u1", "DeviceId": "dev-1", "PlaySessionId": "ps1",
+                              "MediaSourceId": "ms1", "api_key": "secret-token", "Static": "true"] {
+            #expect(query.filter { $0.name == name }.map(\.value) == [value])
+        }
+    }
+
+    let withoutSession = try client.resolveOriginalStream(itemID: "i1", info: PlaybackInfoResponse(mediaSources: [source]))
+    let query = try #require(URLComponents(url: withoutSession.url, resolvingAgainstBaseURL: false)?.queryItems)
+    #expect(query.first { $0.name == "UserId" }?.value == "u1")
+    #expect(query.first { $0.name == "DeviceId" }?.value == "dev-1")
+    #expect(!query.contains { $0.name == "PlaySessionId" })
+}
+
 @Test func reportsUsePascalCase() async throws {
     let session = StubProtocol.session(host: "report.test") { request, body in
         guard request.url!.path == "/Sessions/Playing/Progress",
