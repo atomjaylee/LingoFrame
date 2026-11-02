@@ -1,6 +1,12 @@
 import Testing
 @testable import LearningCore
 
+@Test func extractsLearningTextFromStyledASSEvents() {
+    #expect(SubtitleParser.plainASSDialogue("0,0,Default,,0,0,0,,{\\pos(80,60)\\c&H00FF00&}Hello, world!\\NSecond line.")
+            == "Hello, world!\nSecond line.")
+    #expect(SubtitleParser.plainASSDialogue("Just a normal sentence, with commas.") == "Just a normal sentence, with commas.")
+}
+
 @Test func parsesSRTWithTagsAndMultipleLines() {
     let srt = """
     1

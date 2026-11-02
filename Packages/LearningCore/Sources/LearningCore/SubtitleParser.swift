@@ -2,6 +2,15 @@ import Foundation
 
 /// 文本字幕解析。Emby 能把内嵌和外挂的文本字幕（SRT、ASS、SSA、VTT）统一转成 SRT 输出，这里只需要解析 SRT 和 VTT。
 public enum SubtitleParser {
+    /// 内核保留的 ASS 事件含有样式字段，学习窗口只取最后的对白文字。
+    public static func plainASSDialogue(_ event: String) -> String {
+        event.split(separator: "\n", omittingEmptySubsequences: true).map { line in
+            let fields = line.split(separator: ",", maxSplits: 8, omittingEmptySubsequences: false)
+            let text = fields.count == 9 && Int(fields[0]) != nil ? String(fields[8]) : String(line)
+            return clean(text)
+        }.joined(separator: "\n")
+    }
+
     /// 解析 SRT 或 WebVTT 文本。去掉 HTML 标签和 ASS 样式代码，合并多行，跳过空字幕，按开始时间排序。
     public static func parse(_ text: String) -> [SubtitleCue] {
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")

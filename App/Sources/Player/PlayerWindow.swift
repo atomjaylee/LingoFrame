@@ -617,7 +617,20 @@ private struct ControlBar: View {
     }
 
     private var subtitleTrackMenu: some View {
-        Menu { subtitleOptions } label: {
+        Menu {
+            subtitleOptions
+            if engine.hasStyledSubtitleTrack {
+                Divider()
+                Picker("字幕样式", selection: Binding(
+                    get: { engine.usesOriginalSubtitleStyle },
+                    set: { engine.usesOriginalSubtitleStyle = $0 }
+                )) {
+                    Text("原字幕样式").tag(true)
+                    Text("统一样式").tag(false)
+                }
+                .pickerStyle(.inline)
+            }
+        } label: {
             HoverControlIcon(systemName: "captions.bubble.fill", size: 16)
         }
         .menuStyle(.button).buttonStyle(.plain).clickablePointer().menuIndicator(.hidden).fixedSize()

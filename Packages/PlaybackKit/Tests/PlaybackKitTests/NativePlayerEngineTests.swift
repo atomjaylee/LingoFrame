@@ -37,6 +37,50 @@ private func waitUntil(timeout: Double = 20, _ condition: () -> Bool) async thro
 @Suite(.serialized)
 struct NativePlayerEngineTests {
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(2)))
+    func styledASSKeepsAuthoredAppearanceAndPlainLearningText() async throws {
+        let video = try makeTestMKV(duration: 8)
+        let subtitle = video.deletingPathExtension().appendingPathExtension("ass")
+        let muxed = video.deletingPathExtension().appendingPathExtension("styled.mkv")
+        defer {
+            for url in [video, subtitle, muxed] { try? FileManager.default.removeItem(at: url) }
+        }
+        try (ASSSubtitleRendererTests.header + "\nDialogue: 0,0:00:00.20,0:00:03.50,Default,,0,0,0,,{\\pos(80,60)}Styled dialogue\nDialogue: 1,0:00:00.20,0:00:03.50,Default,,0,0,0,,{\\pos(320,180)}Second line\n")
+            .write(to: subtitle, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpeg)
+        process.arguments = ["-v", "error", "-i", video.path, "-i", subtitle.path,
+                             "-map", "0", "-map", "1", "-c", "copy", "-metadata:s:s:0", "language=eng",
+                             "-disposition:s:0", "default", muxed.path]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        let engine = try NativePlayerEngine()
+        defer { engine.stop() }
+        engine.setBitmapSubtitleRecognitionEnabled(true, language: "eng")
+        try await engine.load(url: muxed)
+        try await waitUntil {
+            !engine.currentSubtitleImages.isEmpty && engine.recognizedSubtitleCues.count >= 2
+        }
+        #expect(engine.currentSubtitleText == nil)
+        #expect(engine.recognizedSubtitleCues.contains { $0.text == "Styled dialogue" })
+        #expect(engine.recognizedSubtitleCues.contains { $0.text == "Second line" })
+        let image = try #require(engine.currentSubtitleImages.first)
+        #expect(image.position.minY < 0.3)
+        #expect(image.position.minX < 0.2)
+        #expect(engine.hasStyledSubtitleTrack)
+        engine.usesOriginalSubtitleStyle = false
+        #expect(engine.currentSubtitleImages.isEmpty)
+        #expect(engine.currentSubtitleText?.contains("Styled dialogue") == true)
+        #expect(engine.currentSubtitleText?.contains("Second line") == true)
+        engine.usesOriginalSubtitleStyle = true
+        #expect(engine.currentSubtitleText == nil)
+        #expect(!engine.currentSubtitleImages.isEmpty)
+        engine.selectSubtitle(nil)
+        #expect(engine.currentSubtitleImages.isEmpty)
+        #expect(engine.currentSubtitleText == nil)
+    }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(2)))
     func learningSubtitleTrackSurvivesVideoTrackChangesAndPause() async throws {
         let video = try makeTestMKV(duration: 8)
         let english = video.deletingPathExtension().appendingPathExtension("en.srt")

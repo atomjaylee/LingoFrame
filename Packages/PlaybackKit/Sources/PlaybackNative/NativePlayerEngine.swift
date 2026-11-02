@@ -6,6 +6,7 @@ import LearningCore
 import Observation
 import os
 import PlaybackCore
+import QuartzCore
 
 public struct NativeSubtitleImage: Identifiable, @unchecked Sendable {
     public let id: Int
@@ -65,6 +66,13 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     public private(set) var nativeSubtitleDescription: String?
     public private(set) var currentSubtitleText: String?
     public private(set) var currentSubtitleImages: [NativeSubtitleImage] = []
+    public private(set) var hasStyledSubtitleTrack = false
+    public var usesOriginalSubtitleStyle = true {
+        didSet {
+            configureASSRenderer()
+            updateSubtitle(at: currentTime)
+        }
+    }
     public private(set) var recognizedSubtitleCues: [RecognizedNativeSubtitleCue] = []
     public private(set) var recognizedCompanionSubtitleCues: [RecognizedNativeSubtitleCue] = []
     public private(set) var isRecognizingBitmapSubtitles = false
@@ -108,6 +116,12 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     @ObservationIgnored private var bitmapRecognitionGeneration: UInt64 = 0
     @ObservationIgnored private var bitmapRecognitionTask: Task<Void, Never>?
     @ObservationIgnored private var lastError: String?
+    @ObservationIgnored private var assRenderer: ASSSubtitleRenderer?
+    @ObservationIgnored private var assTrackID: Int?
+    @ObservationIgnored private var assHeader: String?
+    @ObservationIgnored private var assRenderSize: CGSize = .zero
+    @ObservationIgnored private var assTimer: AnyCancellable?
+    @ObservationIgnored private var subtitleClockSampleTime = CACurrentMediaTime()
     @ObservationIgnored private var segmentGeneration: UInt64 = 0
     @ObservationIgnored private var startupStartedAt: ContinuousClock.Instant?
     @ObservationIgnored private var startupGeneration: UInt64?
@@ -136,15 +150,18 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         activeLearningSubtitleID = nil
         learningScanPositions = [:]
         lastError = nil
+        resetASSRenderer()
         state = .loading
         let options = LoadOptions(
             httpHeaders: source.httpHeaders,
+            preserveASSMarkup: true,
             declaredDurationSeconds: source.durationHint,
             progressiveSegmentDelivery: true,
             autoplay: source.autoplay,
             escalatesToSoftwarePath: true)
         do {
             try await backend.load(url: source.url, startPosition: source.startAt, options: options)
+            configureASSRenderer(force: true)
             startLearningSubtitleChannel()
         } catch is CancellationError {
             throw CancellationError()
@@ -179,6 +196,7 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         cancelSegment()
         resetBitmapSubtitleRecognition(disable: true)
         backend.stop()
+        resetASSRenderer()
     }
 
     public func togglePlay() {
@@ -208,6 +226,7 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         selectedSubtitleID = id
         if let id { backend.selectSubtitleTrack(index: id) }
         else { backend.clearSubtitle() }
+        configureASSRenderer()
         updateSubtitle(at: currentTime)
     }
 
@@ -291,6 +310,73 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     public func setNativeSubtitlesVisible(_ visible: Bool) {
         nativeSubtitlesVisible = visible
         updateSubtitle(at: currentTime)
+        updateASSTimer()
+    }
+
+    /// 按实际视频显示区域生成字幕图片，窗口缩放时保留原字幕相对视频的位置。
+    public func setSubtitleRenderSize(_ size: CGSize) {
+        guard assRenderSize != size else { return }
+        assRenderSize = size
+        updateSubtitle(at: currentTime)
+    }
+
+    private func resetASSRenderer() {
+        assTimer?.cancel()
+        assTimer = nil
+        assRenderer = nil
+        assTrackID = nil
+        assHeader = nil
+        currentSubtitleImages = []
+        currentSubtitleText = nil
+    }
+
+    private func configureASSRenderer(force: Bool = false) {
+        let track = backend.subtitleTracks.first { $0.id == selectedSubtitleID }
+        hasStyledSubtitleTrack = track.map { ["ass", "ssa"].contains($0.codec.lowercased()) } ?? false
+        guard usesOriginalSubtitleStyle, hasStyledSubtitleTrack, let track,
+              let header = track.assHeader ?? backend.sidecarASSHeader else {
+            if assRenderer != nil { resetASSRenderer() }
+            return
+        }
+        guard force || assTrackID != track.id || assHeader != header else { return }
+        resetASSRenderer()
+        assTrackID = track.id
+        assHeader = header
+        assRenderer = ASSSubtitleRenderer(header: header, fonts: backend.fontAttachments)
+        feedASSEvents()
+        updateASSTimer()
+    }
+
+    private func feedASSEvents() {
+        guard let assRenderer else { return }
+        for cue in backend.subtitleCues {
+            guard let text = cue.text else { continue }
+            assRenderer.add(event: text, start: cue.startTime, end: cue.endTime)
+        }
+        renderASS(at: backend.sourceTime)
+    }
+
+    private func renderASS(at time: Double) {
+        guard nativeSubtitlesVisible, let assRenderer else { return }
+        let size = assRenderSize == .zero ? presentationSize : assRenderSize
+        let frame = assRenderer.render(at: time, size: size)
+        if frame.changed { currentSubtitleImages = frame.image.map { [$0] } ?? [] }
+    }
+
+    private func updateASSTimer() {
+        let runs = assRenderer != nil && nativeSubtitlesVisible && state == .playing && !isSeeking && !isBuffering
+        guard runs else {
+            assTimer?.cancel()
+            assTimer = nil
+            renderASS(at: backend.sourceTime)
+            return
+        }
+        guard assTimer == nil else { return }
+        assTimer = Timer.publish(every: 1.0 / 30, on: .main, in: .common).autoconnect().sink { [weak self] _ in
+            guard let self else { return }
+            let elapsed = min(0.12, max(0, CACurrentMediaTime() - subtitleClockSampleTime))
+            renderASS(at: backend.sourceTime + elapsed * rate)
+        }
     }
 
     public func diagnostics() -> PlaybackDiagnostics {
@@ -347,6 +433,7 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
             case .ended: state = .ended
             case .error(let message): state = .failed(message); lastError = message
             }
+            updateASSTimer()
         }.store(in: &cancellables)
 
         backend.$startupProgress.compactMap { $0 }.sink { [weak self] progress in
@@ -370,10 +457,14 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
             self?.updateSubtitle(at: value)
             self?.advanceLearningSubtitleChannel()
         }.store(in: &cancellables)
+        backend.clock.$sourceTime.sink { [weak self] time in
+            self?.subtitleClockSampleTime = CACurrentMediaTime()
+            self?.renderASS(at: time)
+        }.store(in: &cancellables)
 
         backend.$duration.sink { [weak self] in self?.duration = $0 }.store(in: &cancellables)
-        backend.$isSeeking.removeDuplicates().sink { [weak self] in self?.isSeeking = $0 }.store(in: &cancellables)
-        backend.$isBuffering.removeDuplicates().sink { [weak self] in self?.isBuffering = $0 }.store(in: &cancellables)
+        backend.$isSeeking.removeDuplicates().sink { [weak self] in self?.isSeeking = $0; self?.updateASSTimer() }.store(in: &cancellables)
+        backend.$isBuffering.removeDuplicates().sink { [weak self] in self?.isBuffering = $0; self?.updateASSTimer() }.store(in: &cancellables)
         backend.$residentRanges.sink { [weak self] ranges in
             self?.bufferedRanges = ranges.map { BufferedRange(lowerBound: $0.lowerBound, upperBound: $0.upperBound) }
         }.store(in: &cancellables)
@@ -395,16 +486,23 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
                 selectSubtitle(automatic.id)
             }
             startLearningSubtitleChannel()
+            configureASSRenderer()
         }.store(in: &cancellables)
         backend.$activeAudioTrackIndex.sink { [weak self] in self?.selectedAudioID = $0 }.store(in: &cancellables)
         backend.$activeSubtitleTrackIndex.sink { [weak self] id in
             guard let self else { return }
             selectedSubtitleID = id
             nativeSubtitleDescription = subtitleOptions.first(where: { $0.id == id })?.title
+            configureASSRenderer()
+        }.store(in: &cancellables)
+        backend.$sidecarASSHeader.sink { [weak self] _ in
+            Task { @MainActor in self?.configureASSRenderer() }
         }.store(in: &cancellables)
         Publishers.CombineLatest(backend.$subtitleCues, backend.$secondarySubtitleCues).sink { [weak self] primary, secondary in
             guard let self else { return }
             for (isLearning, cues) in [(false, primary), (true, secondary)] {
+                let id = isLearning ? activeLearningSubtitleID : selectedSubtitleID
+                let isASS = backend.subtitleTracks.contains { $0.id == id && ["ass", "ssa"].contains($0.codec.lowercased()) }
                 let mapped = cues.map { cue in
                     let image: NativeSubtitleImage? = if case .image(let value) = cue.body {
                         NativeSubtitleImage(id: cue.id, cgImage: value.cgImage,
@@ -412,13 +510,20 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
                     } else {
                         nil
                     }
+                    let text = isASS ? cue.text.map(SubtitleParser.plainASSDialogue) : cue.text
                     return NativeCue(id: cue.id, startTime: cue.startTime, endTime: cue.endTime,
-                                     text: cue.text, image: image)
+                                     text: text, image: image)
                 }
                 if isLearning { learningNativeCues = mapped }
                 else { nativeCues = mapped }
             }
             updateSubtitle(at: currentTime)
+            if let assRenderer {
+                for cue in primary {
+                    if let text = cue.text { assRenderer.add(event: text, start: cue.startTime, end: cue.endTime) }
+                }
+                renderASS(at: backend.sourceTime)
+            }
             mergeDecodedTextSubtitleCues()
             scheduleBitmapSubtitleRecognition()
             advanceLearningSubtitleChannel()
@@ -521,6 +626,11 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         guard nativeSubtitlesVisible else {
             if currentSubtitleText != nil { currentSubtitleText = nil }
             if !currentSubtitleImages.isEmpty { currentSubtitleImages = [] }
+            return
+        }
+        if assRenderer != nil {
+            currentSubtitleText = nil
+            renderASS(at: backend.sourceTime)
             return
         }
         let active = nativeCues.filter { $0.startTime <= time && time < $0.endTime }
