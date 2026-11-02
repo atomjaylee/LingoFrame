@@ -141,7 +141,6 @@ struct ItemDetailView: View {
         return Button { play(item, resume: true) } label: {
             HStack(spacing: 12) {
                 PillLabel(title)
-                Spacer(minLength: 8)
                 Text("\(percentage)%")
                     .font(.system(size: 13, weight: .semibold))
                     .monospacedDigit()
@@ -394,7 +393,8 @@ private struct DetailPlaybackButtonStyle: ButtonStyle {
         configuration.label
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(.white)
-            .frame(width: 300, height: 45)
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(height: 45)
             .background {
                 GeometryReader { geometry in
                     theme.colors.accentAmber.color.opacity(0.42)
