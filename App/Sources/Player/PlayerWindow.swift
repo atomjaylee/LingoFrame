@@ -253,7 +253,7 @@ private struct PlayerScreen: View {
             PlaybackSubtitleOverlay(engine: session.engine)
                 .padding(.horizontal, 64)
                 .frame(maxHeight: .infinity, alignment: .bottom)
-                .padding(.bottom, controlsVisible ? 118 : 40)
+                .padding(.bottom, 118)
             VStack(spacing: 0) {
                 HStack {
                     CloseButton(window: window)
