@@ -42,6 +42,12 @@ struct SearchView: View {
         let retryRevision: Int
     }
 
+    private enum ResultKind: String, CaseIterable, Identifiable {
+        case movie = "电影", series = "电视剧"
+        var id: String { rawValue }
+        var itemKind: EmbyItem.Kind { self == .movie ? .movie : .series }
+    }
+
     private var sources: [SearchSource] {
         if let scopedClient, let scopedServerID {
             return [SearchSource(id: scopedServerID, name: model.server(scopedServerID)?.name ?? "当前资源库",
@@ -60,49 +66,58 @@ struct SearchView: View {
     var body: some View {
         let request = searchRequest
         ScrollView {
-            VStack(alignment: .leading, spacing: theme.metrics.space(6)) {
-                Text("搜索").themedFont(.title1)
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: theme.metrics.space(2)) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(theme.colors.inkMuted.color)
+                    Group {
+                        if isSearching { ProgressView().controlSize(.small) }
+                        else { Image(systemName: "magnifyingglass").foregroundStyle(theme.colors.inkMuted.color) }
+                    }
+                    .frame(width: 16, height: 16)
                     TextField("剧集、电影", text: $term)
                         .textFieldStyle(.plain)
                         .themedFont(.body)
                         .focused($focused)
+                    if !term.isEmpty {
+                        Button { term = ""; focused = true } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(ClickablePlainButtonStyle())
+                        .accessibilityLabel("清空搜索")
+                    }
                 }
-                .padding(.horizontal, theme.metrics.space(4))
-                .frame(height: 44)
-                .frame(maxWidth: 520)
-                .rexGlass(cornerRadius: 22)
+                .padding(.horizontal, 14)
+                .frame(height: 32)
+                .frame(maxWidth: 440)
+                .rexGlass(cornerRadius: 16)
+                .frame(maxWidth: .infinity)
 
                 sourceFilter
 
-                if !request.query.isEmpty {
-                    HStack(spacing: 8) {
-                        if isSearching { ProgressView().controlSize(.small) }
-                        Text(isSearching ? "正在搜索…" : "已显示 \(results.count) 项结果")
-                            .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-                    }
-                }
-
                 ForEach(sources) { source in
-                    let hits = results.filter { $0.source.id == source.id }
-                    if !hits.isEmpty {
-                        VStack(alignment: .leading, spacing: 16) {
-                            HStack(spacing: 10) {
-                                Label(source.name, systemImage: "externaldrive")
-                                    .font(.system(size: 17, weight: .semibold))
-                                Text("\(hits.count) 项").font(.system(size: 12)).foregroundStyle(.secondary)
-                            }
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: theme.metrics.posterWidth, maximum: theme.metrics.posterWidth * 1.3),
-                                                         spacing: theme.metrics.space(4))],
-                                      alignment: .leading, spacing: theme.metrics.space(6)) {
-                                ForEach(hits) { result in
-                                    ItemCard(item: result.item)
-                                        .environment(\.embyClient, source.client)
-                                        .environment(\.embyServerID, source.id)
+                    ForEach(ResultKind.allCases) { kind in
+                        let hits = results.filter {
+                            $0.source.id == source.id && $0.item.kind == kind.itemKind
+                        }
+                        if !hits.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 8) {
+                                    Text(selectedSourceID == nil && sources.count > 1 ? "\(source.name) · \(kind.rawValue)" : kind.rawValue)
+                                        .font(.system(size: 15, weight: .semibold))
+                                    Text("\(hits.count) 部").font(.system(size: 11)).foregroundStyle(.secondary)
                                 }
+                                ScrollView(.horizontal) {
+                                    LazyHStack(spacing: 12) {
+                                        ForEach(hits) { result in
+                                            SearchResultCard(item: result.item)
+                                                .environment(\.embyClient, source.client)
+                                                .environment(\.embyServerID, source.id)
+                                        }
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                                .scrollIndicators(.never)
+                                .accessibilityLabel("\(source.name)的\(kind.rawValue)搜索结果")
                             }
-                            .mediaCardStyle(PosterTileStyle())
                         }
                     }
                     if failedSourceIDs.contains(source.id) {
@@ -134,7 +149,7 @@ struct SearchView: View {
             }
             .padding(.leading, inset)
             .padding(.trailing, theme.metrics.space(6))
-            .padding(.top, 56)
+            .padding(.top, 24)
             .padding(.bottom, theme.metrics.space(8))
         }
         .onAppear { focused = true }
@@ -152,7 +167,6 @@ struct SearchView: View {
                         .disabled(!source.isAvailable)
                 }
             }
-            .padding(.vertical, 2)
         }
         .scrollIndicators(.never)
         .accessibilityLabel("搜索范围")
@@ -170,7 +184,8 @@ struct SearchView: View {
             for source in targets {
                 group.addTask {
                     do {
-                        return SearchResponse(source: source, items: try await source.client.search(request.query), failed: false)
+                        let items = try await source.client.search(request.query)
+                        return SearchResponse(source: source, items: items, failed: false)
                     } catch {
                         return SearchResponse(source: source, items: [], failed: true)
                     }
