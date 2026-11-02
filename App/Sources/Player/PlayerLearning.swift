@@ -7,7 +7,7 @@ import PlaybackKit
 import SwiftUI
 import Translation
 
-// 播放页的学习部分（设计稿「精听播放」）：画面上的双语字幕（单词可点查词）、查词卡片、右侧学习面板。
+// 视频保留原字幕；双语、查词和跟读功能由独立学习面板提供。
 
 // MARK: - 字幕层
 

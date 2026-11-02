@@ -210,7 +210,7 @@ private struct PlayerScreen: View {
 
     private var stage: some View {
         ZStack {
-            // 单击只唤出控制栏，双击播放/暂停；按钮、字幕单词和查词卡自己处理点击。
+            // 单击只唤出控制栏，双击播放/暂停；按钮自己处理点击。
             Color.clear
                 .contentShape(Rectangle())
                 .gesture(TapGesture(count: 2).onEnded {
