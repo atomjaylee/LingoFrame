@@ -114,15 +114,10 @@ struct ItemDetailView: View {
 
     @ViewBuilder private var primaryButton: some View {
         if let emby, emby.isPlayable {
-            Button { play(emby, resume: true) } label: {
-                PillLabel(emby.resumePositionSeconds == nil ? "播放" : "继续播放")
-            }
-            .buttonStyle(RexPillButtonStyle())
+            playbackButton(emby)
         } else if isSeries, emby != nil, let next = nextEpisode {
-            Button { play(next, resume: true) } label: {
-                PillLabel([next.resumePositionSeconds == nil ? "播放" : "继续播放", next.episodeCode].compactMap { $0 }.joined(separator: " "))
-            }
-            .buttonStyle(RexPillButtonStyle())
+            let item = if let focusEpisode, focusEpisode.id == next.id { focusEpisode } else { next }
+            playbackButton(item)
         } else if emby != nil, episodesFailed {
             Button { Task { await loadEpisodes() } } label: { PillLabel("分集读取失败，点按重试", systemImage: "arrow.clockwise") }
                 .buttonStyle(RexPillButtonStyle(dimmed: true))
@@ -136,6 +131,25 @@ struct ItemDetailView: View {
                 .disabled(true)
                 .help("添加包含这部作品的 Emby 资源库后就能直接播放")
         }
+    }
+
+    private func playbackButton(_ item: EmbyItem) -> some View {
+        let progress = min(max(item.progress ?? (item.isPlayed ? 1 : 0), 0), 1)
+        let percentage = Int(progress * 100)
+        let title = [item.resumePositionSeconds == nil ? "播放" : "继续播放", item.episodeCode]
+            .compactMap { $0 }.joined(separator: " ")
+        return Button { play(item, resume: true) } label: {
+            HStack(spacing: 12) {
+                PillLabel(title)
+                Spacer(minLength: 8)
+                Text("\(percentage)%")
+                    .font(.system(size: 13, weight: .semibold))
+                    .monospacedDigit()
+            }
+            .padding(.horizontal, 18)
+        }
+        .buttonStyle(DetailPlaybackButtonStyle(progress: progress))
+        .accessibilityValue("已播放 \(percentage)%")
     }
 
     @ViewBuilder private var heroActions: some View {
@@ -368,6 +382,32 @@ struct ItemDetailView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+/// 播放按钮本身作为进度条，填充只表达已播放比例，点击仍从保存的位置继续播放。
+private struct DetailPlaybackButtonStyle: ButtonStyle {
+    let progress: Double
+    @Environment(\.theme) private var theme
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 300, height: 45)
+            .background {
+                GeometryReader { geometry in
+                    theme.colors.accentAmber.color.opacity(0.42)
+                        .frame(width: geometry.size.width * progress, height: geometry.size.height)
+                }
+                .clipShape(Capsule())
+                .allowsHitTesting(false)
+            }
+            .background(.white.opacity(configuration.isPressed ? 0.24 : 0.16), in: Capsule())
+            .background(.ultraThinMaterial, in: Capsule())
+            .contentShape(Capsule())
+            .clickablePointer()
+            .animation(.easeOut(duration: 0.2), value: progress)
     }
 }
 
