@@ -181,14 +181,18 @@ extension TMDBTitle {
         func best(_ lang: String?) -> RawImage? {
             logos.filter { $0.iso6391 == lang }.max { ($0.voteAverage ?? 0) < ($1.voteAverage ?? 0) }
         }
-        let backdrop = (raw.images?.backdrops ?? [])
+        let backdrops = (raw.images?.backdrops ?? [])
             .filter { ($0.width ?? 0) > 0 && ($0.height ?? 0) > 0 }
-            .max { lhs, rhs in
-                let leftPixels = (lhs.width ?? 0) * (lhs.height ?? 0)
-                let rightPixels = (rhs.width ?? 0) * (rhs.height ?? 0)
-                return leftPixels == rightPixels
-                    ? (lhs.voteAverage ?? 0) < (rhs.voteAverage ?? 0) : leftPixels < rightPixels
-            }?.filePath ?? raw.backdropPath
+        // 推荐横图达到 2K 时优先使用，不再只按像素数量覆盖推荐图。
+        let recommended = backdrops.first {
+            $0.filePath == raw.backdropPath && ($0.width ?? 0) >= 2560 && ($0.height ?? 0) >= 1440
+        }
+        let backdrop = (recommended ?? backdrops.max { lhs, rhs in
+            let leftPixels = (lhs.width ?? 0) * (lhs.height ?? 0)
+            let rightPixels = (rhs.width ?? 0) * (rhs.height ?? 0)
+            return leftPixels == rightPixels
+                ? (lhs.voteAverage ?? 0) < (rhs.voteAverage ?? 0) : leftPixels < rightPixels
+        })?.filePath ?? raw.backdropPath
         self.init(
             ref: TMDBRef(type: type, id: raw.id),
             title: raw.title ?? raw.name ?? "",

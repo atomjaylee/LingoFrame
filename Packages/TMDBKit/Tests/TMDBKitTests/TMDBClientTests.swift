@@ -77,6 +77,25 @@ private let officeJSON = """
     #expect(client.imageURL(title.backdropPath, size: .original)?.path == "/t/p/original/4k.jpg")
 }
 
+@Test func detailsPreferRecommendedBackdropWhenAlreadyHighResolution() async throws {
+    let session = Stub.session(host: "recommended-backdrop.test") { _ in
+        (200, #"{"id":1668,"name":"老友记","backdrop_path":"/recommended.jpg","images":{"backdrops":[{"file_path":"/recommended.jpg","width":2560,"height":1440,"vote_average":6},{"file_path":"/larger.jpg","width":3840,"height":2160,"vote_average":5}]}}"#)
+    }
+    let client = TMDBClient(token: "0123456789abcdef0123456789abcdef", config: config("recommended-backdrop.test"), session: session, cacheDirectory: nil)
+    let title = try await client.details(TMDBRef(type: .tv, id: 1668))
+    #expect(title.backdropPath == "/recommended.jpg")
+    #expect(client.imageURL(title.backdropPath, size: .original)?.path == "/t/p/original/recommended.jpg")
+}
+
+@Test func detailsReplaceSmallRecommendedBackdropWithHigherResolutionImage() async throws {
+    let session = Stub.session(host: "small-backdrop.test") { _ in
+        (200, #"{"id":1668,"name":"老友记","backdrop_path":"/small.jpg","images":{"backdrops":[{"file_path":"/small.jpg","width":1280,"height":720,"vote_average":9},{"file_path":"/4k.jpg","width":3840,"height":2160,"vote_average":6}]}}"#)
+    }
+    let client = TMDBClient(token: "0123456789abcdef0123456789abcdef", config: config("small-backdrop.test"), session: session, cacheDirectory: nil)
+    let title = try await client.details(TMDBRef(type: .tv, id: 1668))
+    #expect(title.backdropPath == "/4k.jpg")
+}
+
 @Test func bearerTokenGoesInHeaderAndResultsAreCached() async throws {
     let token = String(repeating: "x", count: 120)
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
