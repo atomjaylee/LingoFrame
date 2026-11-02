@@ -17,6 +17,7 @@ struct ItemDetailView: View {
     @State private var seasons: [EmbyItem] = []
     @State private var seasonID: String?
     @State private var episodes: [EmbyItem] = []
+    @State private var selectedEpisodeID: String?
     @State private var focusEpisode: EmbyItem?
     @State private var resolution: String?
     @State private var sourceID: String?
@@ -153,9 +154,9 @@ struct ItemDetailView: View {
         }
     }
 
-    /// 剧集的「下一集」：第一个没看完的分集。
+    /// 优先使用手动选中的分集，否则选择第一个没看完的分集。
     private var nextEpisode: EmbyItem? {
-        episodes.first { !$0.isPlayed } ?? episodes.first
+        episodes.first { $0.id == selectedEpisodeID } ?? episodes.first { !$0.isPlayed } ?? episodes.first
     }
 
     // MARK: 下方
@@ -202,12 +203,12 @@ struct ItemDetailView: View {
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: 16) {
                     ForEach(episodes) { ep in
-                        EpisodeTile(episode: ep)
-                            .onTapGesture { play(ep, resume: true) }
+                        EpisodeTile(episode: ep, isSelected: ep.id == nextEpisode?.id)
+                            .onTapGesture { selectedEpisodeID = ep.id; play(ep, resume: true) }
                             .clickablePointer()
                             .contextMenu {
-                                Button("播放") { play(ep, resume: true) }
-                                Button("从头播放") { play(ep, resume: false) }
+                                Button("播放") { selectedEpisodeID = ep.id; play(ep, resume: true) }
+                                Button("从头播放") { selectedEpisodeID = ep.id; play(ep, resume: false) }
                                 Divider()
                                 Button(ep.isPlayed ? "标记为未看" : "标记为已看") { Task { await setPlayed(!ep.isPlayed, ep) } }
                             }
@@ -378,6 +379,7 @@ struct EpisodeTile: View {
     @Environment(\.embyClient) private var client
     @State private var isHovered = false
     let episode: EmbyItem
+    let isSelected: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -400,6 +402,10 @@ struct EpisodeTile: View {
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(.white.opacity(isSelected ? 0.9 : 0), lineWidth: 2)
+                }
             Text([episode.episodeCode, episode.name].compactMap { $0 }.joined(separator: " · "))
                 .font(.system(size: 14, weight: .semibold)).lineLimit(1)
             Text(episode.isPlayed ? [episode.runtimeText, "已看"].compactMap { $0 }.joined(separator: " · ")
@@ -409,8 +415,11 @@ struct EpisodeTile: View {
         }
         .frame(width: 240, alignment: .leading)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .onHover { isHovered = $0 }
         .hoverTransition(value: isHovered)
+        .hoverTransition(value: isSelected)
     }
 }
 
