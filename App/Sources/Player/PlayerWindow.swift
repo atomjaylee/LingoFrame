@@ -558,7 +558,7 @@ private struct ControlBar: View {
                              label: window?.styleMask.contains(.fullScreen) == true ? "退出全屏（回车）" : "全屏（回车）") {
                             window?.toggleFullScreen(nil)
                         }
-                        PlayerControlButton(systemName: "text.book.closed.fill", size: 17, label: "打开字幕与学习") {
+                        PlayerControlButton(systemName: "translate", size: 17, label: "打开字幕与学习") {
                             openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                         }
                         PlayerControlButton(systemName: "list.bullet", size: 17, label: "选集") {

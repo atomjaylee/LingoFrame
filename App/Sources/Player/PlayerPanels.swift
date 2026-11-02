@@ -9,7 +9,7 @@ import Workspace
 enum PlayerPanels {
     @MainActor
     static func register(in registry: PanelRegistry) {
-        registry.register(PanelDescriptor(id: PanelIDs.transcript, title: "字幕与学习", systemImage: "text.book.closed.fill",
+        registry.register(PanelDescriptor(id: PanelIDs.transcript, title: "字幕与学习", systemImage: "translate",
                                           defaultPlacement: .floating) { TranscriptFloatingPanel() })
         registry.register(PanelDescriptor(id: PanelIDs.episodes, title: "选集", systemImage: "list.bullet.rectangle",
                                           defaultPlacement: .trailing) { EpisodesPanel() })
