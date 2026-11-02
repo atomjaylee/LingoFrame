@@ -465,6 +465,7 @@ struct ItemCard: View {
     @Environment(\.openWindow) private var openWindow
     let item: EmbyItem
     var landscape = false
+    var sourceName: String?
 
     private var play: PlayAction { PlayAction(openWindow: openWindow, model: model, serverID: serverID) }
 
@@ -486,11 +487,20 @@ struct ItemCard: View {
     }
 
     private var card: some View {
-        MediaCard(title: item.cardTitle,
-                  code: item.kind == .episode ? item.episodeCode : nil,
-                  subtitle: landscape ? [item.remainingText, item.kind == .movie ? "电影" : nil].compactMap { $0 }.joined(separator: " · ")
-                      : (item.kind == .episode ? item.name : item.productionYear.map(String.init)),
-                  imageURL: client?.imageURL(for: item, type: landscape ? .thumb : .primary, maxWidth: landscape ? 640 : 360),
-                  progress: item.progress, isPlayed: item.isPlayed)
+        VStack(alignment: .leading, spacing: 6) {
+            MediaCard(title: item.cardTitle,
+                      code: item.kind == .episode ? item.episodeCode : nil,
+                      subtitle: landscape ? [item.remainingText, item.kind == .movie ? "电影" : nil].compactMap { $0 }.joined(separator: " · ")
+                          : (item.kind == .episode ? item.name : item.productionYear.map(String.init)),
+                      imageURL: client?.imageURL(for: item, type: landscape ? .thumb : .primary, maxWidth: landscape ? 640 : 360),
+                      progress: item.progress, isPlayed: item.isPlayed)
+            if let sourceName {
+                Label("来自 \(sourceName)", systemImage: "externaldrive")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help("资源库：\(sourceName)")
+            }
+        }
     }
 }
