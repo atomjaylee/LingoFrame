@@ -317,7 +317,7 @@ struct LearningPanel: View {
                 Menu("主字幕") {
                     ForEach(session.subtitleOptions) { option in
                         Button { session.selectPrimarySubtitle(option) } label: {
-                            if option == session.primarySubtitle { Label(option.title, systemImage: "checkmark") }
+                            if option == session.learningPrimarySubtitle { Label(option.title, systemImage: "checkmark") }
                             else { Text(option.title) }
                         }
                     }

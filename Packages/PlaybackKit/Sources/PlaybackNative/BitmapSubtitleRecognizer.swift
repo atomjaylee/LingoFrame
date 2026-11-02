@@ -33,7 +33,7 @@ enum BitmapSubtitleRecognizer {
     private nonisolated static func recognizeSynchronously(_ image: CGImage, language: String?) -> String? {
         guard let flattened = flattenedOntoBlack(image) else { return nil }
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .fast
+        request.recognitionLevel = visionLanguage(language) == "zh" ? .accurate : .fast
         request.usesLanguageCorrection = true
         if let language = visionLanguage(language),
            let supported = try? request.supportedRecognitionLanguages(),

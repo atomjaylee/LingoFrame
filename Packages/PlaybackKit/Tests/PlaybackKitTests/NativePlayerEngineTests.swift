@@ -68,17 +68,26 @@ struct NativePlayerEngineTests {
             engine.currentSubtitleText?.contains("你好") == true && !engine.recognizedSubtitleCues.isEmpty
         }
         #expect(engine.recognizedSubtitleCues.allSatisfy { $0.text == "Hello, welcome back." })
+        engine.setLearningCompanionSubtitle(chineseID, language: "zho")
+        try await waitUntil { !engine.recognizedCompanionSubtitleCues.isEmpty }
+        #expect(engine.recognizedCompanionSubtitleCues.allSatisfy { $0.text == "你好，欢迎回来。" })
+        #expect(engine.recognizedSubtitleCues.allSatisfy { $0.text == "Hello, welcome back." })
+        #expect(engine.selectedSubtitleID == chineseID)
         let cached = engine.recognizedSubtitleCues
+        let cachedChinese = engine.recognizedCompanionSubtitleCues
         engine.pauseBitmapSubtitleRecognition()
         #expect(engine.recognizedSubtitleCues == cached)
+        #expect(engine.recognizedCompanionSubtitleCues == cachedChinese)
         #expect(!engine.isRecognizingBitmapSubtitles)
         #expect(engine.selectedSubtitleID == chineseID)
         engine.selectSubtitle(nil)
         #expect(engine.currentSubtitleText == nil)
         #expect(engine.recognizedSubtitleCues == cached)
+        #expect(engine.recognizedCompanionSubtitleCues == cachedChinese)
         engine.setBitmapSubtitleRecognitionEnabled(true, language: "eng", trackID: englishID)
         #expect(engine.selectedSubtitleID == nil)
         #expect(engine.recognizedSubtitleCues.contains { $0.text == "Hello, welcome back." })
+        #expect(engine.recognizedCompanionSubtitleCues.contains { $0.text == "你好，欢迎回来。" })
     }
 
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(2)))
