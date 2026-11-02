@@ -177,7 +177,7 @@ final class AppModel {
 
     /// 详情页后台预热：并行读取条目和播放信息，并预取片源开头字节。
     func preparePlayback(serverID: String, itemID: String) async {
-        guard activeSession == nil, let client = server(serverID)?.client else { return }
+        guard activeSession == nil, let client = server(serverID)?.client.forPreloading() else { return }
         prewarmTask?.cancel()
         preparedPlayback = nil
         preparationGeneration &+= 1

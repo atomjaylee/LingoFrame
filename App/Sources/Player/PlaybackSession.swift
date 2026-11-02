@@ -342,7 +342,7 @@ final class PlaybackSession {
     private func prepareNextItem(generation: UInt64) {
         nextPreparationTask?.cancel()
         preparedNext = nil
-        guard let client, let serverID, let next = nextItem else { return }
+        guard let client = client?.forPreloading(), let serverID, let next = nextItem else { return }
         nextPreparationTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             guard let self, !Task.isCancelled, generation == self.loadGeneration else { return }

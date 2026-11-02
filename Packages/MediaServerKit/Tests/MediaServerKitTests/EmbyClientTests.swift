@@ -33,6 +33,31 @@ private func account(host: String) -> EmbyAccount {
     _ = try await client.subtitleText(itemID: "e1", mediaSourceID: "ms1", streamIndex: 2)
 }
 
+@Test func preloadingPrefixesUserAgentWithoutChangingPlaybackIdentity() async throws {
+    let session = StubProtocol.session(host: "preloading.test") { request, _ in
+        let preloading = request.url!.path.contains("/pre/")
+        #expect(request.value(forHTTPHeaderField: "User-Agent") == (preloading ? "pre" : "") + "ELEnglish/0.1.0 (macOS)")
+        let auth = request.value(forHTTPHeaderField: "X-Emby-Authorization")
+        #expect(auth?.contains(#"Client="ELEnglish""#) == true)
+        #expect(auth?.contains(#"DeviceId="dev-1""#) == true)
+        #expect(request.value(forHTTPHeaderField: "X-Emby-Token") == "secret-token")
+        if request.url!.path.contains("/Subtitles/") { return .json("1\n00:00:00,000 --> 00:00:01,000\nHello\n") }
+        let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(query.first { $0.name == "UserId" }?.value == "u1")
+        return .json(#"{"MediaSources":[{"Id":"ms1","Container":"mp4"}],"PlaySessionId":"ps1"}"#)
+    }
+    let client = EmbyClient(account: account(host: "preloading.test"), identity: identity, session: session)
+    let preloading = client.forPreloading()
+    #expect(preloading.playbackHTTPHeaders == ["User-Agent": "preELEnglish/0.1.0 (macOS)"])
+    #expect(preloading.forPreloading().playbackHTTPHeaders == preloading.playbackHTTPHeaders)
+    _ = try await preloading.playbackInfo(itemID: "pre", profile: .native)
+    _ = try await preloading.subtitleText(itemID: "pre", mediaSourceID: "ms1", streamIndex: 2)
+    let info = try await client.playbackInfo(itemID: "normal", profile: .native)
+    #expect(client.playbackHTTPHeaders == ["User-Agent": "ELEnglish/0.1.0 (macOS)"])
+    #expect(try preloading.resolveOriginalStream(itemID: "i1", info: info).url
+        == client.resolveOriginalStream(itemID: "i1", info: info).url)
+}
+
 @Test func authorizationHeaderKeepsFieldsAfterUnicodeDeviceName() {
     let unicodeIdentity = ClientIdentity(appName: "ELEnglish", appVersion: "0.1.0",
                                          deviceName: "atom’s Mac Pro", deviceID: "dev-1")

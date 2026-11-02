@@ -92,6 +92,8 @@ struct Transport: Sendable {
     let identity: ClientIdentity
     let token: String?
     let session: URLSession
+    var isPreloading = false
+    var userAgent: String { (isPreloading ? "pre" : "") + identity.userAgent }
     private static let log = Logger(subsystem: "app.elenglish", category: "emby")
 
     func url(_ path: String, _ query: [String: String?] = [:]) -> URL {
@@ -131,7 +133,7 @@ struct Transport: Sendable {
     func raw(method: String, url: URL, body: Data?) async throws -> Data {
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.httpMethod = method
-        request.setValue(identity.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(identity.authorizationHeader(token: token), forHTTPHeaderField: "X-Emby-Authorization")
         if let token { request.setValue(token, forHTTPHeaderField: "X-Emby-Token") }

@@ -82,15 +82,22 @@ public struct EmbyConnector: Sendable {
 /// 登录后的 Emby 客户端。值类型、无状态，可以在任意线程使用。
 public struct EmbyClient: Sendable {
     public let account: EmbyAccount
-    let transport: Transport
+    var transport: Transport
 
     public init(account: EmbyAccount, identity: ClientIdentity, session: URLSession = .shared) {
         self.account = account
         transport = Transport(baseURL: account.serverURL, identity: identity, token: account.accessToken, session: session)
     }
 
-    /// 播放和预热使用同一身份，不携带接口认证头到媒体重定向地址。
-    public var playbackHTTPHeaders: [String: String] { ["User-Agent": transport.identity.userAgent] }
+    /// 媒体请求不携带接口认证头到重定向地址。
+    public var playbackHTTPHeaders: [String: String] { ["User-Agent": transport.userAgent] }
+
+    /// 预加载使用单独的 UA，用户、设备和认证信息保持一致，不影响正式播放。
+    public func forPreloading() -> EmbyClient {
+        var client = self
+        client.transport.isPreloading = true
+        return client
+    }
 
     private var user: String { "Users/\(account.userID)" }
     static let listFields = "PrimaryImageAspectRatio,ProductionYear,Overview,PremiereDate,RunTimeTicks,Genres,OfficialRating,CommunityRating,ProviderIds"
