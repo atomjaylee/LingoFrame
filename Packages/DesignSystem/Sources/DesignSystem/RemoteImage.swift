@@ -47,6 +47,8 @@ public actor ImagePipeline {
         let cacheURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("app.elenglish/Images", isDirectory: true)
         let config = URLSessionConfiguration.default
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        config.httpAdditionalHeaders = ["User-Agent": "Pixon/\(version) (macOS)"]
         config.urlCache = URLCache(memoryCapacity: 16 << 20, diskCapacity: diskCapacityMB << 20, directory: cacheURL)
         config.requestCachePolicy = .returnCacheDataElseLoad
         session = URLSession(configuration: config)

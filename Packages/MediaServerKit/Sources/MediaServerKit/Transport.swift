@@ -14,7 +14,7 @@ public struct ClientIdentity: Hashable, Sendable {
         self.deviceID = deviceID
     }
 
-    public var userAgent: String { "\(appName)/\(appVersion) (macOS)" }
+    public var userAgent: String { "Pixon/\(appVersion) (macOS)" }
 
     func authorizationHeader(token: String?) -> String {
         // URLSession 会在非 ASCII 字符处截断请求头。电脑名常含弯引号或中文，

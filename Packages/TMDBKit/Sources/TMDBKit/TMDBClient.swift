@@ -102,6 +102,8 @@ public actor TMDBClient {
 
         let fetch: @Sendable () async throws -> Data = { [session, token] in
             var request = URLRequest(url: url, timeoutInterval: 15)
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+            request.setValue("Pixon/\(version) (macOS)", forHTTPHeaderField: "User-Agent")
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             if usesBearer { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
             let (data, response): (Data, URLResponse)

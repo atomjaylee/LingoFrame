@@ -48,6 +48,8 @@ private let officeJSON = """
 
 @Test func detailsPickEnglishLogoAndFallBackToEnglishOverview() async throws {
     let session = Stub.session(host: "details.test") { request in
+        #expect(request.value(forHTTPHeaderField: "User-Agent")?.hasPrefix("Pixon/") == true)
+        #expect(request.value(forHTTPHeaderField: "User-Agent")?.hasSuffix(" (macOS)") == true)
         let q = request.url!.query ?? ""
         #expect(q.contains("api_key=0123456789abcdef0123456789abcdef"))
         if q.contains("language=en-US") { return (200, #"{"id":2316,"name":"The Office","overview":"A mockumentary."}"#) }
