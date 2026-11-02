@@ -5,6 +5,7 @@ import LearningCore
 import MediaServerKit
 import PlaybackKit
 import SwiftUI
+import Translation
 
 // 播放页的学习部分（设计稿「精听播放」）：画面上的双语字幕（单词可点查词）、查词卡片、右侧学习面板。
 
@@ -18,7 +19,7 @@ struct SubtitleOverlay: View {
     var body: some View {
         let mode = session.subtitleMode
         let line = session.currentLine.flatMap { session.primaryCues.indices.contains($0) ? session.primaryCues[$0] : nil }
-        if !session.usesNativePlaybackSubtitles {
+        if !session.usesNativePlaybackSubtitles || (mode == .bilingual && !session.primaryCues.isEmpty) {
             VStack(spacing: 8) {
                 if mode != .off, let line {
                     FlowLayout(spacing: 7, lineSpacing: 4) {
@@ -243,6 +244,14 @@ struct LearningPanel: View {
         VStack(spacing: 0) {
             header
             toolbar
+            if session.subtitleMode == .bilingual, let note = session.translationNote {
+                Text(note)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 8)
+            }
             if tab == .transcript {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("前后文")
@@ -358,6 +367,28 @@ struct LearningPanel: View {
     }
 }
 
+/// 翻译会话挂在播放窗口上，字幕窗口关闭后也能继续生成画面所需的中文。
+struct SubtitleTranslation: ViewModifier {
+    let session: PlaybackSession
+    @State private var configuration: TranslationSession.Configuration?
+    @State private var nextConfiguration = TranslationSession.Configuration(source: Locale.Language(identifier: "en"),
+                                                                           target: Locale.Language(identifier: "zh-Hans"))
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: session.systemTranslationID, initial: true) { _, id in
+                if id == nil { configuration = nil }
+                else {
+                    nextConfiguration.invalidate()
+                    configuration = nextConfiguration
+                }
+            }
+            .translationTask(configuration) { translator in
+                await session.translateSubtitles(using: translator)
+            }
+    }
+}
+
 /// 当前句保留大字，译文开关与时间同行，避免挤占前后文和复听按钮。
 private struct CurrentSentence: View {
     let session: PlaybackSession
@@ -369,7 +400,7 @@ private struct CurrentSentence: View {
     @State private var resumeAfterLookup = false
 
     private var translation: String? {
-        session.secondaryCues.first { $0.range.overlaps(cue.range) }?.text
+        session.translation(for: cue)
     }
     private var showsTranslation: Bool { translationOverride ?? (session.subtitleMode == .bilingual) }
 
@@ -382,8 +413,8 @@ private struct CurrentSentence: View {
                 Spacer(minLength: 8)
                 Button { translationOverride = !showsTranslation } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: showsTranslation ? "eye.slash" : "eye")
-                        Text(showsTranslation ? "隐藏中文" : "显示中文")
+                        Image(systemName: showsTranslation && translation != nil ? "eye.slash" : "eye")
+                        Text(showsTranslation && translation != nil ? "隐藏中文" : "显示中文")
                         Text("T").foregroundStyle(.secondary)
                     }
                     .font(.system(size: 11, weight: .medium))
@@ -395,7 +426,7 @@ private struct CurrentSentence: View {
                 .buttonStyle(.plain).clickablePointer()
                 .keyboardShortcut("t", modifiers: [])
                 .disabled(translation == nil)
-                .help(translation == nil ? "请在字幕设置中选择中文字幕轨" : "只显示或隐藏当前句的中文")
+                .help(translation == nil ? "切到双语后自动加载或生成中文" : "只显示或隐藏当前句的中文")
             }
             .foregroundStyle(.secondary)
 

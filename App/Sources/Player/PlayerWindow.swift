@@ -150,6 +150,7 @@ private struct PlayerScreen: View {
             stage
         }
         .background(Color.black)
+        .modifier(SubtitleTranslation(session: session))
         .environment(session)
         .environment(\.colorScheme, .dark)
         .navigationTitle(session.windowTitle)
