@@ -38,8 +38,8 @@ public enum SubtitleParser {
         return (hours * 3600 + minutes * 60) * 1000 + Int64((seconds * 1000).rounded())
     }
 
-    private static let htmlTagPattern = /<[^>]+>/
-    private static let assOverridePattern = /\{[^}]*\}/
+    private static var htmlTagPattern: Regex<Substring> { /<[^>]+>/ }
+    private static var assOverridePattern: Regex<Substring> { /\{[^}]*\}/ }
 
     /// 去掉 <i>、<font> 等标签和 {\an8} 这类 ASS 覆盖代码，把 \N 换成换行。
     static func clean(_ line: String) -> String {
