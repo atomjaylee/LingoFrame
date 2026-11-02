@@ -97,7 +97,7 @@ struct SearchView: View {
                                                          spacing: theme.metrics.space(4))],
                                       alignment: .leading, spacing: theme.metrics.space(6)) {
                                 ForEach(hits) { result in
-                                    ItemCard(item: result.item, sourceName: source.name)
+                                    ItemCard(item: result.item)
                                         .environment(\.embyClient, source.client)
                                         .environment(\.embyServerID, source.id)
                                 }
