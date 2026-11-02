@@ -139,13 +139,8 @@ struct ItemDetailView: View {
         let title = [item.resumePositionSeconds == nil ? "播放" : "继续播放", item.episodeCode]
             .compactMap { $0 }.joined(separator: " ")
         return Button { play(item, resume: true) } label: {
-            HStack(spacing: 12) {
-                PillLabel(title)
-                Text("\(percentage)%")
-                    .font(.system(size: 13, weight: .semibold))
-                    .monospacedDigit()
-            }
-            .padding(.horizontal, 18)
+            PillLabel(title)
+                .padding(.horizontal, 18)
         }
         .buttonStyle(DetailPlaybackButtonStyle(progress: progress))
         .accessibilityValue("已播放 \(percentage)%")
