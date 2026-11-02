@@ -173,6 +173,9 @@ private struct PlayerScreen: View {
         }
         .onDisappear { keyMonitor.stop() }
         .onChange(of: showsEpisodes) { _, _ in poke() }
+        .onChange(of: session.item?.kind == .episode) { _, isEpisode in
+            if !isEpisode { showsEpisodes = false }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
             if let window, note.object as? NSWindow === window { model.activeSession = session }
         }
@@ -303,7 +306,7 @@ private struct PlayerScreen: View {
     private var episodesDrawer: some View {
         GeometryReader { geometry in
             ZStack(alignment: .trailing) {
-                if showsEpisodes {
+                if showsEpisodes, session.item?.kind == .episode {
                     Color.black.opacity(0.28)
                         .onTapGesture { showsEpisodes = false }
                         .transition(.opacity)
@@ -321,7 +324,7 @@ private struct PlayerScreen: View {
             .clipped()
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.92), value: showsEpisodes)
-        .allowsHitTesting(showsEpisodes)
+        .allowsHitTesting(showsEpisodes && session.item?.kind == .episode)
     }
 
     /// 鼠标在画面上移动或按了快捷键：显示控制条，1.1 秒没动静再淡出。
@@ -510,6 +513,7 @@ private struct ControlBar: View {
     private var engine: NativePlayerEngine { session.engine }
 
     var body: some View {
+        let isEpisode = session.item?.kind == .episode
         VStack(spacing: 12) {
             HStack(spacing: 14) {
                 TimeText(engine: engine, showsDuration: false)
@@ -531,21 +535,25 @@ private struct ControlBar: View {
                         Spacer()
                     }
                     HStack(spacing: compact ? 4 : 14) {
-                        icon("backward.end.fill", size: 17, label: "上一集") {
-                            if let prev = session.previousItem { Task { await session.play(itemID: prev.id, resume: true) } }
+                        if isEpisode {
+                            icon("backward.end.fill", size: 17, label: "上一集") {
+                                if let prev = session.previousItem { Task { await session.play(itemID: prev.id, resume: true) } }
+                            }
+                            .disabled(session.previousItem == nil)
+                            .opacity(session.previousItem == nil ? 0.35 : 1)
                         }
-                        .disabled(session.previousItem == nil)
-                        .opacity(session.previousItem == nil ? 0.35 : 1)
                         icon("gobackward.10", size: 20, label: "后退 10 秒（⇧←）") { session.seek(by: -10) }
                         PlayerControlButton(image: Image(systemName: engine.state == .playing ? "pause.fill" : "play.fill"), size: 22,
                                             label: engine.state == .playing ? "暂停（空格）" : "播放（空格）",
                                             prominent: true) { session.togglePlay() }
                         icon("goforward.10", size: 20, label: "前进 10 秒（⇧→）") { session.seek(by: 10) }
-                        icon("forward.end.fill", size: 17, label: "下一集") {
-                            if let next = session.nextItem { Task { await session.play(itemID: next.id, resume: true) } }
+                        if isEpisode {
+                            icon("forward.end.fill", size: 17, label: "下一集") {
+                                if let next = session.nextItem { Task { await session.play(itemID: next.id, resume: true) } }
+                            }
+                            .disabled(session.nextItem == nil)
+                            .opacity(session.nextItem == nil ? 0.35 : 1)
                         }
-                        .disabled(session.nextItem == nil)
-                        .opacity(session.nextItem == nil ? 0.35 : 1)
                     }
                     HStack(spacing: compact ? 2 : 8) {
                         Spacer()
@@ -561,11 +569,11 @@ private struct ControlBar: View {
                         PlayerControlButton(image: Image(systemName: "translate"), size: 15, label: "打开字幕与学习") {
                             openWindow(id: WorkspaceWindows.floatingPanel, value: PanelIDs.transcript)
                         }
-                        PlayerControlButton(image: Image("EpisodePlaylist"), size: 17, label: "选集") {
-                            showsEpisodes.toggle()
+                        if isEpisode, !session.siblings.isEmpty {
+                            PlayerControlButton(image: Image("EpisodePlaylist"), size: 17, label: "选集") {
+                                showsEpisodes.toggle()
+                            }
                         }
-                        .disabled(session.siblings.isEmpty)
-                        .opacity(session.siblings.isEmpty ? 0.35 : 1)
                     }
                 }
                 .frame(height: 44)
