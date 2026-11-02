@@ -121,7 +121,8 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
 
     public func load(_ source: PlaybackSource) async throws {
         if startupStartedAt == nil { beginStartupMeasurement(context: "直接加载") }
-        resetBitmapSubtitleRecognition(disable: true)
+        // 保留会话在起播前设置的识别开关，只清理上一段字幕的识别结果。
+        resetBitmapSubtitleRecognition(disable: false)
         lastError = nil
         state = .loading
         let options = LoadOptions(

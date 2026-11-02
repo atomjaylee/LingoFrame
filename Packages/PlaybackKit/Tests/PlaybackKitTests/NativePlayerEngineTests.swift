@@ -36,6 +36,31 @@ private func waitUntil(timeout: Double = 20, _ condition: () -> Bool) async thro
 @MainActor
 @Suite(.serialized)
 struct NativePlayerEngineTests {
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(2)))
+    func subtitleRecognitionConfiguredBeforeLoadWorksWithoutSwitchingTracks() async throws {
+        let video = try makeTestMKV()
+        let subtitle = video.deletingPathExtension().appendingPathExtension("srt")
+        let muxed = video.deletingPathExtension().appendingPathExtension("subtitled.mkv")
+        defer {
+            for url in [video, subtitle, muxed] { try? FileManager.default.removeItem(at: url) }
+        }
+        try "1\n00:00:00,200 --> 00:00:03,500\nHello, welcome back.\n".write(to: subtitle, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpeg)
+        process.arguments = ["-v", "error", "-i", video.path, "-i", subtitle.path,
+                             "-map", "0", "-map", "1", "-c", "copy",
+                             "-metadata:s:s:0", "language=eng", "-disposition:s:0", "default", muxed.path]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        let engine = try NativePlayerEngine()
+        defer { engine.stop() }
+        engine.setBitmapSubtitleRecognitionEnabled(true, language: "eng")
+        try await engine.load(url: muxed)
+        try await waitUntil(timeout: 8) { !engine.recognizedSubtitleCues.isEmpty }
+        #expect(engine.recognizedSubtitleCues.first?.text == "Hello, welcome back.")
+    }
+
     @Test func bitmapSubtitleKeepsDiscCanvasPosition() throws {
         let context = CGContext(data: nil, width: 10, height: 10, bitsPerComponent: 8,
                                 bytesPerRow: 40, space: CGColorSpaceCreateDeviceRGB(),
