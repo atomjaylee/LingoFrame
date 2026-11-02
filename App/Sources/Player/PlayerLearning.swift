@@ -611,20 +611,20 @@ struct EpisodeArtwork: View {
     var body: some View {
         let url = client?.imageURL(for: episode, type: .primary, maxWidth: 320)
         RemoteImage(url: url, maxPixelSize: 320)
-            .frame(width: 112, height: 63)
+            .frame(width: 80, height: 45)
             .overlay {
                 if url == nil {
-                    Image(systemName: "film").font(.system(size: 20)).foregroundStyle(.secondary)
+                    Image(systemName: "film").font(.system(size: 16)).foregroundStyle(.secondary)
                 }
             }
             .overlay(alignment: .topTrailing) {
                 if isCurrent || episode.isPlayed {
                     Image(systemName: isCurrent ? "speaker.wave.2.fill" : "checkmark.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(isCurrent ? Color(red: 1, green: 0.68, blue: 0.03) : .white)
-                        .padding(5)
+                        .padding(3)
                         .background(.black.opacity(0.65), in: Circle())
-                        .padding(4)
+                        .padding(3)
                 }
             }
             .overlay(alignment: .bottom) {

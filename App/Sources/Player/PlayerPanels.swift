@@ -163,7 +163,8 @@ struct EpisodesPanel: View {
                             LazyVStack(spacing: 2) {
                                 ForEach(session.siblings) { ep in row(ep, session: session).id(ep.id) }
                             }
-                            .padding(theme.metrics.space(3))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
                         }
                         .onAppear { proxy.scrollTo(session.item?.id, anchor: .center) }
                     }
@@ -181,24 +182,25 @@ struct EpisodesPanel: View {
             if !isCurrent { Task { await session.play(itemID: ep.id, resume: true) } }
             onClose?()
         } label: {
-            HStack(spacing: theme.metrics.space(3)) {
+            HStack(spacing: 10) {
                 EpisodeArtwork(episode: ep, client: session.client, isCurrent: isCurrent)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(ep.episodeCode ?? "").themedFont(.caption).foregroundStyle(theme.colors.inkMuted.color)
-                    Text(ep.displayName).themedFont(.body, weight: isCurrent ? .semibold : .regular).lineLimit(2)
+                    Text(ep.displayName).themedFont(.subhead, weight: isCurrent ? .semibold : .regular).lineLimit(1)
                 }
                 Spacer()
                 if let p = ep.progress, p > 0, !ep.isPlayed {
                     Text("\(Int(p * 100))%").themedFont(.caption).foregroundStyle(theme.colors.inkMuted.color)
                 }
             }
-            .padding(.horizontal, theme.metrics.space(3))
-            .padding(.vertical, theme.metrics.space(2))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
             .background(isCurrent ? theme.colors.surfaceSelected.color : .clear,
                         in: RoundedRectangle(cornerRadius: theme.metrics.radiusMd, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(ClickablePlainButtonStyle())
+        .help(ep.displayName)
     }
 }
 
