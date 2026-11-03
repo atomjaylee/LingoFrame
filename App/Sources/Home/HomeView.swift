@@ -19,6 +19,8 @@ struct HomeView: View {
     @State private var resume: [(serverID: String, item: EmbyItem)] = []
     @State private var heroIndex = 0
     @State private var heroHovered = false
+    /// 往下滚动时大图压暗的程度，0 到 1。内容盖上来后大图退成背景，不再和海报行抢视线。
+    @State private var scrollDim = 0.0
 
     private var store: RecommendationStore { model.recommendations }
 
@@ -53,6 +55,7 @@ struct HomeView: View {
             ZStack(alignment: .topLeading) {
                 if model.tmdb != nil {
                     HeroBackdrop(url: backdropURL(hero?.title))
+                        .overlay { Color.black.opacity(scrollDim * 0.78).allowsHitTesting(false) }
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16 * scale) {
@@ -70,6 +73,13 @@ struct HomeView: View {
                     .padding(.bottom, 48)
                 }
                 .scrollIndicators(.never)
+                // 滚过大图的一半时压到最暗；按 2% 取整，滚动时不会每一帧都刷新整页。
+                .onScrollGeometryChange(for: Double.self) { geometry in
+                    let offset = max(geometry.contentOffset.y + geometry.contentInsets.top, 0)
+                    return (min(offset / max(windowHeight * 0.4, 1), 1) * 50).rounded() / 50
+                } action: { _, dim in
+                    scrollDim = dim
+                }
             }
             .ignoresSafeArea()
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: hero?.title.ref)
@@ -178,7 +188,7 @@ struct HomeView: View {
             if heroes.count > 1 {
                 ForEach(heroes.indices, id: \.self) { index in
                     CarouselPageButton(title: heroes[index].title.title, isCurrent: heroIndex == index,
-                                       isPaused: heroHovered || scenePhase != .active || reduceMotion, scale: scale,
+                                       isPaused: heroHovered || scrollDim > 0.5 || scenePhase != .active || reduceMotion, scale: scale,
                                        select: { heroIndex = index }, advance: { moveHero(by: 1) })
                         .id(heroes[index].title.ref)
                 }
