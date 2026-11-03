@@ -92,14 +92,6 @@ struct HomeView: View {
             guard let url = nextBackdropURL else { return }
             _ = try? await ImagePipeline.shared.image(for: url, maxPixelSize: 4096)
         }
-        .task(id: hero?.title.ref) {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(7))
-                guard !Task.isCancelled else { return }
-                guard heroes.count > 1, !heroHovered, scenePhase == .active, !reduceMotion else { continue }
-                moveHero(by: 1)
-            }
-        }
     }
 
     // MARK: 第一屏
@@ -187,16 +179,10 @@ struct HomeView: View {
         HStack(spacing: 0) {
             if heroes.count > 1 {
                 ForEach(heroes.indices, id: \.self) { index in
-                    Button { heroIndex = index } label: {
-                        Circle()
-                            .fill(.white.opacity(heroIndex == index ? 1 : 0.35))
-                            .frame(width: 6 * scale, height: 6 * scale)
-                            .frame(width: 16 * scale, height: 24 * scale)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(ClickablePlainButtonStyle())
-                    .accessibilityLabel("切换至\(heroes[index].title.title)")
-                    .accessibilityValue(heroIndex == index ? "当前显示" : "")
+                    CarouselPageButton(title: heroes[index].title.title, isCurrent: heroIndex == index,
+                                       isPaused: heroHovered || scenePhase != .active || reduceMotion, scale: scale,
+                                       select: { heroIndex = index }, advance: { moveHero(by: 1) })
+                        .id(heroes[index].title.ref)
                 }
             }
         }
@@ -299,6 +285,62 @@ struct HomeView: View {
         guard !Task.isCancelled else { return }
         resume = all.sorted { ($0.1.userData?.lastPlayedDate ?? "") > ($1.1.userData?.lastPlayedDate ?? "") }
             .map { (serverID: $0.0, item: $0.1) }
+    }
+}
+
+/// 当前页圆点兼作倒计时，计时更新只刷新这一枚按钮。
+private struct CarouselPageButton: View {
+    let title: String
+    let isCurrent: Bool
+    let isPaused: Bool
+    let scale: Double
+    let select: @MainActor () -> Void
+    let advance: @MainActor () -> Void
+    @State private var progress = 0.0
+
+    var body: some View {
+        Button {
+            progress = 0
+            select()
+        } label: {
+            Group {
+                if isCurrent {
+                    Capsule().fill(.white.opacity(0.3))
+                        .frame(width: 28 * scale, height: 6 * scale)
+                        .overlay(alignment: .leading) {
+                            Capsule().fill(.white)
+                                .frame(width: 28 * scale * progress, height: 6 * scale)
+                        }
+                        .clipShape(Capsule())
+                } else {
+                    Circle().fill(.white.opacity(0.35))
+                        .frame(width: 6 * scale, height: 6 * scale)
+                }
+            }
+            .frame(width: (isCurrent ? 36 : 16) * scale, height: 24 * scale)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(ClickablePlainButtonStyle())
+        .accessibilityLabel("切换至\(title)")
+        .accessibilityValue(isCurrent ? (isPaused ? "当前显示，轮播已暂停" : "当前显示，\(Int(ceil((1 - progress) * 7)))秒后切换") : "")
+        .onChange(of: isCurrent) { progress = 0 }
+        .task(id: isCurrent && !isPaused) {
+            guard isCurrent, !isPaused else { return }
+            var previousTick = ContinuousClock.now
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(33))
+                guard !Task.isCancelled else { return }
+                let now = ContinuousClock.now
+                let elapsed = previousTick.duration(to: now).components
+                previousTick = now
+                let seconds = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+                progress = min(progress + seconds / 7, 1)
+                if progress >= 1 {
+                    advance()
+                    return
+                }
+            }
+        }
     }
 }
 
