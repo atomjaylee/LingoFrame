@@ -10,14 +10,11 @@ struct SettingsView: View {
     @State private var page: Page = .appearance
     @State private var tmdbOK: Bool?
 
-    enum Page: Hashable { case servers, tmdb, layout, cache, appearance }
+    enum Page: Hashable { case tmdb, layout, cache, appearance }
 
     var body: some View {
         NavigationSplitView {
             List(selection: $page) {
-                row(.servers, "资源库", icon: "externaldrive") {
-                    Text("\(model.servers.count) 个").foregroundStyle(.secondary)
-                }
                 row(.tmdb, "TMDB", icon: "film.stack") {
                     HStack(spacing: 4) {
                         Circle().fill(tmdbOK == false ? Color.red : model.tmdb == nil ? Color.secondary : Color.green).frame(width: 6, height: 6)
@@ -37,7 +34,6 @@ struct SettingsView: View {
         } detail: {
             Group {
                 switch page {
-                case .servers: AccountSettings()
                 case .tmdb: TMDBSettings(status: $tmdbOK)
                 case .layout: LayoutSettings()
                 case .cache: CacheSettings()
@@ -51,7 +47,6 @@ struct SettingsView: View {
 
     private var title: String {
         switch page {
-        case .servers: "资源库"
         case .tmdb: "数据与资源"
         case .layout: "播放布局"
         case .cache: "缓存与预加载"
@@ -231,27 +226,6 @@ private struct LayoutSettings: View {
             } footer: {
                 Text("在播放窗口里可以拖动面板分隔条、右键面板标签移动位置，布局会自动保存。")
                     .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-private struct AccountSettings: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        Form {
-            if model.servers.isEmpty {
-                Text("尚未添加 Emby 资源库").foregroundStyle(.secondary)
-            } else {
-                ForEach(model.servers) { server in
-                    Section(server.name) {
-                        LabeledContent("地址", value: server.account.serverURL.absoluteString)
-                        LabeledContent("用户", value: server.account.userName)
-                        Button("移除资源库", role: .destructive) { model.removeServer(server.id) }.clickablePointer()
-                    }
-                }
             }
         }
         .formStyle(.grouped)
