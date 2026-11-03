@@ -218,4 +218,24 @@ struct NativePlayerEngineTests {
         #expect(host.subviews.first === surface)
         #expect(engine.diagnostics().playbackType?.contains("Apple") == true)
     }
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: ffmpeg)), .timeLimit(.minutes(2)))
+    func cachedProgressSeekUsesKeyframeWhileLearningSeekRemainsExact() async throws {
+        let video = try makeTestMKV(duration: 12)
+        defer { try? FileManager.default.removeItem(at: video) }
+        let engine = try NativePlayerEngine()
+        defer { engine.stop() }
+
+        try await engine.load(url: video)
+        try await waitUntil {
+            engine.duration > 7.3
+                && engine.bufferedRanges.contains { $0.lowerBound <= 7.3 && 7.3 < $0.upperBound }
+        }
+
+        await engine.seek(to: 7.3)
+        #expect(abs(engine.currentTime - 7.3) >= 0.1)
+
+        await engine.seek(to: 7.3, exact: true)
+        #expect(abs(engine.currentTime - 7.3) < 0.5)
+    }
 }

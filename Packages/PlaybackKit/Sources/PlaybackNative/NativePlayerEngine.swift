@@ -123,6 +123,7 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     @ObservationIgnored private var assTimer: AnyCancellable?
     @ObservationIgnored private var subtitleClockSampleTime = CACurrentMediaTime()
     @ObservationIgnored private var segmentGeneration: UInt64 = 0
+    @ObservationIgnored private var seekGeneration: UInt64 = 0
     @ObservationIgnored private var startupStartedAt: ContinuousClock.Instant?
     @ObservationIgnored private var startupGeneration: UInt64?
     @ObservationIgnored private var startupContext = "直接加载"
@@ -203,8 +204,25 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         state == .playing ? pause() : play()
     }
 
-    public func seek(to seconds: Double, exact _: Bool = false) async {
-        await backend.seek(to: max(0, duration > 0 ? min(seconds, duration) : seconds))
+    public func seek(to seconds: Double, exact: Bool = false) async {
+        seekGeneration &+= 1
+        let generation = seekGeneration
+        let target = max(0, duration > 0 ? min(seconds, duration) : seconds)
+
+        if !exact,
+           bufferedRanges.contains(where: { $0.lowerBound <= target && target < $0.upperBound }),
+           backend.supportsCacheBackedStills,
+           let preview = await backend.scrubPreviewFrame(
+               atSeconds: target, refined: false, maxWidth: 16,
+               isCancelled: { Task.isCancelled }
+           ), generation == seekGeneration, !Task.isCancelled,
+           preview.validRange?.contains(target) == true {
+            await backend.seek(to: preview.actualSeconds)
+            return
+        }
+
+        guard generation == seekGeneration, !Task.isCancelled else { return }
+        await backend.seek(to: target)
     }
 
     public func skip(by seconds: Double) {
