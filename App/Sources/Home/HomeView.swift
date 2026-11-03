@@ -41,6 +41,12 @@ struct HomeView: View {
         return backdropURL(heroes[(heroIndex + 1) % heroes.count].title)
     }
 
+    private func moveHero(by offset: Int) {
+        let count = heroes.count
+        guard count > 1 else { return }
+        heroIndex = (heroIndex + offset + count) % count
+    }
+
     var body: some View {
         GeometryReader { geo in
             let scale = min(1, max(0.8, geo.size.width / 1440))
@@ -91,7 +97,7 @@ struct HomeView: View {
                 try? await Task.sleep(for: .seconds(7))
                 guard !Task.isCancelled else { return }
                 guard heroes.count > 1, !heroHovered, scenePhase == .active, !reduceMotion else { continue }
-                heroIndex = (heroIndex + 1) % heroes.count
+                moveHero(by: 1)
             }
         }
     }
@@ -112,6 +118,26 @@ struct HomeView: View {
                 .padding(.top, 28 * scale)
         }
         .frame(height: height)
+        .overlay {
+            if heroes.count > 1 {
+                HStack {
+                    Button { moveHero(by: -1) } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .accessibilityLabel("上一张海报")
+                    .help("上一张")
+                    Spacer()
+                    Button { moveHero(by: 1) } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                    .accessibilityLabel("下一张海报")
+                    .help("下一张")
+                }
+                .buttonStyle(RexBackButtonStyle())
+                .padding(.leading, inset)
+                .padding(.trailing, 18 * scale)
+            }
+        }
         .contentShape(Rectangle())
         .onHover { heroHovered = $0 }
     }
