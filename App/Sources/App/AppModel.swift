@@ -133,13 +133,18 @@ final class AppModel {
                                   deviceName: Host.current().localizedName ?? "Mac", deviceID: deviceID)
 
         #if DEBUG
-        // 开发版没有正式签名，钥匙串每次重新编译都会弹窗，改存本地私有文件（600 权限）。
-        accountStore = AccountStore(secrets: FileSecretStore(url: support.appendingPathComponent("dev-account.json")))
-        tmdbSecret = FileSecretStore(url: support.appendingPathComponent("dev-tmdb.txt"))
+        let isDebugBuild = true
         #else
-        accountStore = AccountStore(secrets: KeychainSecretStore(service: "app.elenglish.mac", account: "emby.accounts"))
-        tmdbSecret = KeychainSecretStore(service: "app.elenglish.mac", account: "tmdb.token")
+        let isDebugBuild = false
         #endif
+        if CredentialStoragePolicy.usesPrivateFiles(isDebugBuild: isDebugBuild) {
+            // 本机临时签名的版本共用原有私有文件，切换构建方式时不会丢失账号和密钥。
+            accountStore = AccountStore(secrets: FileSecretStore(url: support.appendingPathComponent("dev-account.json")))
+            tmdbSecret = FileSecretStore(url: support.appendingPathComponent("dev-tmdb.txt"))
+        } else {
+            accountStore = AccountStore(secrets: KeychainSecretStore(service: "app.elenglish.mac", account: "emby.accounts"))
+            tmdbSecret = KeychainSecretStore(service: "app.elenglish.mac", account: "tmdb.token")
+        }
 
         tmdbConfig = defaults.data(forKey: "tmdb.config").flatMap { try? JSONDecoder().decode(TMDBConfig.self, from: $0) } ?? .default
         servers = accountStore.load().map { ServerConnection(account: $0, identity: identity) }

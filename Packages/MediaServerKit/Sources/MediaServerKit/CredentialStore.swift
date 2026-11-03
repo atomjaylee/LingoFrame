@@ -8,6 +8,29 @@ public protocol SecretStore: Sendable {
     func delete()
 }
 
+/// 本机临时签名的构建复用私有配置文件；稳定签名的发行构建使用钥匙串。
+public enum CredentialStoragePolicy {
+    public static func usesPrivateFiles(isDebugBuild: Bool) -> Bool {
+        usesPrivateFiles(isDebugBuild: isDebugBuild, signingFlags: isDebugBuild ? nil : currentSigningFlags())
+    }
+
+    static func usesPrivateFiles(isDebugBuild: Bool, signingFlags: UInt32?) -> Bool {
+        isDebugBuild || (signingFlags.map { $0 & SecCodeSignatureFlags.adhoc.rawValue != 0 } ?? false)
+    }
+
+    private static func currentSigningFlags() -> UInt32? {
+        var code: SecCode?
+        guard SecCodeCopySelf(SecCSFlags(rawValue: 0), &code) == errSecSuccess, let code else { return nil }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, SecCSFlags(rawValue: 0), &staticCode) == errSecSuccess,
+              let staticCode else { return nil }
+        var information: CFDictionary?
+        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: 0), &information) == errSecSuccess,
+              let details = information as? [String: Any] else { return nil }
+        return (details[kSecCodeInfoFlags as String] as? NSNumber)?.uint32Value
+    }
+}
+
 /// 正式版使用：存在 macOS 钥匙串里。
 public struct KeychainSecretStore: SecretStore {
     let service: String
@@ -51,8 +74,8 @@ public struct KeychainSecretStore: SecretStore {
     }
 }
 
-/// 仅开发版使用：没有正式签名证书时，每次重新编译钥匙串都会弹窗要求授权，
-/// 所以开发版存成只有当前用户可读写（600 权限）的文件。
+/// 本机临时签名的构建使用：避免重新编译后反复请求钥匙串授权，
+/// 存成只有当前用户可读写（600 权限）的文件。
 public struct FileSecretStore: SecretStore {
     let url: URL
 
