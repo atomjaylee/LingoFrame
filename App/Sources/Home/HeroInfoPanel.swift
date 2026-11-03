@@ -123,11 +123,24 @@ struct HeroBackdrop: View {
     let url: URL?
     /// 底部渐隐到的颜色；nil 表示压成黑色。
     var fadeTo: Color?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var artwork: DecodedImage?
+    @State private var artworkURL: URL?
 
     var body: some View {
         // 图片放在 overlay 里，按比例填满时不会把外面的布局撑宽。
         Color.clear
-            .overlay { RemoteImage(url: url, maxPixelSize: 4096) }
+            .overlay {
+                ZStack {
+                    if let artwork {
+                        Image(decorative: artwork.cgImage, scale: 1)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .id(artworkURL)
+                            .transition(.opacity)
+                    }
+                }
+            }
             .clipped()
             .overlay {
                 LinearGradient(stops: [.init(color: .black.opacity(0.25), location: 0),
@@ -142,5 +155,15 @@ struct HeroBackdrop: View {
                                startPoint: .leading, endPoint: .trailing)
             }
             .accessibilityHidden(true)
+            .task(id: url) {
+                guard let url else { artwork = nil; artworkURL = nil; return }
+                let loaded = try? await ImagePipeline.shared.image(for: url, maxPixelSize: 4096)
+                guard !Task.isCancelled else { return }
+                // 原图加载完成后再交叉淡化，切换时保留上一张，避免中途闪空白。
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.65)) {
+                    artwork = loaded
+                    artworkURL = url
+                }
+            }
     }
 }

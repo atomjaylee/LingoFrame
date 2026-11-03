@@ -53,8 +53,6 @@ struct HomeView: View {
             ZStack(alignment: .topLeading) {
                 if model.tmdb != nil {
                     HeroBackdrop(url: backdropURL(hero?.title))
-                        .id(hero?.title.ref)
-                        .transition(.opacity)
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16 * scale) {
