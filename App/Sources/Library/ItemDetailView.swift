@@ -136,10 +136,8 @@ struct ItemDetailView: View {
     private func playbackButton(_ item: EmbyItem) -> some View {
         let progress = min(max(item.progress ?? (item.isPlayed ? 1 : 0), 0), 1)
         let percentage = Int(progress * 100)
-        let title = [item.resumePositionSeconds == nil ? "播放" : "继续播放", item.episodeCode]
-            .compactMap { $0 }.joined(separator: " ")
         return Button { play(item, resume: true) } label: {
-            PillLabel(title)
+            PillLabel("播放")
                 .padding(.horizontal, 18)
         }
         .buttonStyle(DetailPlaybackButtonStyle(progress: progress))
