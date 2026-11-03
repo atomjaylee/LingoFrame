@@ -73,15 +73,28 @@ struct MainShell: View {
                 .accessibilityHidden(collapsed)
                 .animation(sidebarAnimation, value: collapsed)
 
-            WindowChromeControls(window: window, collapsed: collapsed, goBack: path.isEmpty ? nil : {
-                if !path.isEmpty { path.removeLast() }
-            }) {
+            WindowChromeControls(window: window, collapsed: collapsed) {
                 collapsed.toggle()
             }
             .padding(.leading, 22)
             .padding(.top, 15)
             .ignoresSafeArea(edges: .top)
             .animation(sidebarAnimation, value: collapsed)
+
+            if !path.isEmpty {
+                Button {
+                    if !path.isEmpty { path.removeLast() }
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(RexBackButtonStyle())
+                .accessibilityLabel("返回")
+                // 展开时放在内容区左上角；折叠时避开固定的窗口控制区。
+                .padding(.leading, collapsed ? 148 : inset - 12)
+                .padding(.top, 15)
+                .ignoresSafeArea(edges: .top)
+                .animation(sidebarAnimation, value: collapsed)
+            }
         }
         .background(WindowAccessor { window = $0 })
         .onChange(of: section) { path = NavigationPath() }
@@ -244,7 +257,6 @@ private struct WindowTrafficLights: View {
 private struct WindowChromeControls: View {
     let window: NSWindow?
     let collapsed: Bool
-    let goBack: (() -> Void)?
     let toggleSidebar: () -> Void
 
     var body: some View {
@@ -271,11 +283,6 @@ private struct WindowChromeControls: View {
             .buttonStyle(ClickablePlainButtonStyle())
             .accessibilityLabel(collapsed ? "展开侧边栏" : "收起侧边栏")
 
-            if let goBack {
-                Button(action: goBack) { Image(systemName: "chevron.left") }
-                    .buttonStyle(RexBackButtonStyle())
-                    .accessibilityLabel("返回")
-            }
         }
         .frame(height: 32)
     }
