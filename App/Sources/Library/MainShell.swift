@@ -40,16 +40,20 @@ struct MainShell: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var section: ShellSection = .home
     @State private var path = NavigationPath()
     @State private var window: NSWindow?
+    @State private var viewport = CGSize(width: 1440, height: 900)
     @AppStorage("sidebar.collapsed") private var collapsed = false
 
     private var inset: Double {
-        collapsed ? 128 : RexChrome.contentLeading
+        (collapsed ? 128 : RexChrome.contentLeading - 12) * chromeScale
     }
 
+    private var chromeScale: Double { min(1, max(0.8, viewport.width / 1440)) }
+    private var cinematicHome: Bool { section == .home && path.isEmpty && model.tmdb != nil }
     private var sidebarAnimation: Animation? { reduceMotion ? nil : .easeOut(duration: 0.12) }
 
     var body: some View {
@@ -64,10 +68,15 @@ struct MainShell: View {
             .environment(\.contentLeadingInset, inset)
 
             Sidebar(section: $section)
-                .frame(width: RexChrome.sidebarWidth)
-                .padding(RexChrome.sidebarInset)
+                .environment(\.colorScheme, cinematicHome ? .dark : colorScheme)
+                .foregroundStyle(cinematicHome ? .white : theme.colors.ink.color)
+                .frame(width: RexChrome.sidebarWidth, height: max(viewport.height / chromeScale - RexChrome.sidebarInset * 2, 0))
+                .scaleEffect(chromeScale, anchor: .topLeading)
+                .frame(width: RexChrome.sidebarWidth * chromeScale,
+                       height: max(viewport.height - RexChrome.sidebarInset * 2 * chromeScale, 0), alignment: .topLeading)
+                .padding(RexChrome.sidebarInset * chromeScale)
                 .ignoresSafeArea(edges: .top)
-                .offset(x: collapsed ? -(RexChrome.sidebarWidth + RexChrome.sidebarInset * 2) : 0)
+                .offset(x: collapsed ? -(RexChrome.sidebarWidth + RexChrome.sidebarInset * 2) * chromeScale : 0)
                 .opacity(collapsed ? 0 : 1)
                 .allowsHitTesting(!collapsed)
                 .accessibilityHidden(collapsed)
@@ -76,8 +85,10 @@ struct MainShell: View {
             WindowChromeControls(window: window, collapsed: collapsed) {
                 collapsed.toggle()
             }
-            .padding(.leading, 22)
-            .padding(.top, 15)
+            .environment(\.colorScheme, cinematicHome ? .dark : colorScheme)
+            .scaleEffect(chromeScale, anchor: .topLeading)
+            .padding(.leading, 20 * chromeScale)
+            .padding(.top, 10 * chromeScale)
             .ignoresSafeArea(edges: .top)
             .animation(sidebarAnimation, value: collapsed)
 
@@ -89,13 +100,18 @@ struct MainShell: View {
                 }
                 .buttonStyle(RexBackButtonStyle())
                 .accessibilityLabel("返回")
+                .scaleEffect(chromeScale)
                 // 展开时放在内容区左上角；折叠时避开固定的窗口控制区。
-                .padding(.leading, collapsed ? 148 : inset - 12)
-                .padding(.top, 15)
+                .padding(.leading, collapsed ? 148 * chromeScale : inset - 12 * chromeScale)
+                .padding(.top, 10 * chromeScale)
                 .ignoresSafeArea(edges: .top)
                 .animation(sidebarAnimation, value: collapsed)
             }
         }
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
+        .onGeometryChange(for: CGSize.self) {
+            CGSize(width: $0.size.width, height: $0.size.height + $0.safeAreaInsets.top)
+        } action: { viewport = $0 }
         .background(WindowAccessor { window = $0 })
         .onChange(of: section) { path = NavigationPath() }
         .task { await model.refreshAll() }
@@ -105,7 +121,7 @@ struct MainShell: View {
 
     @ViewBuilder private var content: some View {
         switch section {
-        case .home: HomeView(openLibraryPage: { section = .library })
+        case .home: HomeView(openLibraryPage: { section = .library }, windowHeight: viewport.height)
         case .library: LibraryPage()
         case .search: SearchView()
         case .comingSoon(let title): ComingSoonView(title: title)

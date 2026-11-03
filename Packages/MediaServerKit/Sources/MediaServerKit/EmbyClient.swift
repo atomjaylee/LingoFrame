@@ -116,7 +116,7 @@ public struct EmbyClient: Sendable {
 
     public func resumeItems(limit: Int = 24) async throws -> [EmbyItem] {
         let page: ItemsPage = try await transport.get("\(user)/Items/Resume", [
-            "Limit": "\(limit)", "MediaTypes": "Video", "Fields": Self.listFields,
+            "Limit": "\(limit)", "MediaTypes": "Video", "Fields": Self.listFields + ",UserDataLastPlayedDate",
             "EnableUserData": "true", "ImageTypeLimit": "1", "EnableImageTypes": "Primary,Backdrop,Thumb",
         ])
         return page.items

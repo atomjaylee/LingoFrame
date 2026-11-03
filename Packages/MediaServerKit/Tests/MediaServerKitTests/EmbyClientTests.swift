@@ -122,11 +122,14 @@ private func account(host: String) -> EmbyAccount {
     let session = StubProtocol.session(host: "items.test") { request, _ in
         guard request.value(forHTTPHeaderField: "X-Emby-Token") == "secret-token",
               request.url!.path == "/Users/u1/Items/Resume" else { return .json("", status: 404) }
+        let fields = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?
+            .first { $0.name == "Fields" }?.value ?? ""
+        #expect(fields.split(separator: ",").contains("UserDataLastPlayedDate"))
         return .json("""
         {"Items":[{"Id":"e1","Name":"Pilot","Type":"Episode","SeriesId":"s9","SeriesName":"Friends",
           "IndexNumber":1,"ParentIndexNumber":1,"RunTimeTicks":13200000000,
           "ImageTags":{"Primary":"p1"},"ParentBackdropItemId":"s9","ParentBackdropImageTags":["b9"],
-          "UserData":{"PlaybackPositionTicks":6600000000,"Played":false},"UnknownField":123}],
+          "UserData":{"PlaybackPositionTicks":6600000000,"Played":false,"LastPlayedDate":"2026-11-03T06:00:00.0000000Z"},"UnknownField":123}],
          "TotalRecordCount":1}
         """)
     }
@@ -137,6 +140,7 @@ private func account(host: String) -> EmbyAccount {
     #expect(e.episodeCode == "S01E01")
     #expect(e.progress == 0.5)
     #expect(e.resumePositionSeconds == 660)
+    #expect(e.userData?.lastPlayedDate == "2026-11-03T06:00:00.0000000Z")
 
     let primary = try #require(client.imageURL(for: e, type: .primary, maxWidth: 300))
     #expect(primary.path == "/Items/e1/Images/Primary")

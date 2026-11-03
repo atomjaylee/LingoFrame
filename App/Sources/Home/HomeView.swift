@@ -8,6 +8,7 @@ import TMDBKit
 /// 往下滚动时「继续学习」和按难度分组的海报行从剧照上滑过。
 struct HomeView: View {
     let openLibraryPage: () -> Void
+    let windowHeight: Double
 
     @Environment(AppModel.self) private var model
     @Environment(\.contentLeadingInset) private var inset
@@ -22,7 +23,9 @@ struct HomeView: View {
     private var store: RecommendationStore { model.recommendations }
 
     private var heroes: [(entry: CatalogEntry, title: TMDBTitle)] {
-        LearningCatalog.allEntries.filter(\.featured).compactMap { e in store.titles[e.id].map { (e, $0) } }
+        let entries = LearningCatalog.allEntries
+        return Array((entries.filter(\.featured) + entries.filter { !$0.featured })
+            .compactMap { e in store.titles[e.id].map { (e, $0) } }.prefix(20))
     }
 
     private var hero: (entry: CatalogEntry, title: TMDBTitle)? {
@@ -40,6 +43,7 @@ struct HomeView: View {
 
     var body: some View {
         GeometryReader { geo in
+            let scale = min(1, max(0.8, geo.size.width / 1440))
             ZStack(alignment: .topLeading) {
                 if model.tmdb != nil {
                     HeroBackdrop(url: backdropURL(hero?.title))
@@ -47,13 +51,13 @@ struct HomeView: View {
                         .transition(.opacity)
                 }
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 32) {
+                    VStack(alignment: .leading, spacing: 16 * scale) {
                         if model.tmdb == nil {
                             onboarding(height: max(geo.size.height * 0.7, 480))
                         } else {
-                            heroSection(height: max(geo.size.height * 0.62, 500), width: geo.size.width)
+                            heroSection(height: max(windowHeight * 0.72, 440), scale: scale)
                         }
-                        if !resume.isEmpty { continueRow }
+                        if !resume.isEmpty { continueRow(scale: scale) }
                         ForEach(LearningCatalog.groups) { group in
                             let items = group.entries.compactMap { e in store.titles[e.id].map { (e, $0) } }
                             if !items.isEmpty { catalogRow(group, items: items) }
@@ -94,46 +98,73 @@ struct HomeView: View {
 
     // MARK: 第一屏
 
-    private func heroSection(height: Double, width: Double) -> some View {
+    private func heroSection(height: Double, scale: Double) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Spacer(minLength: 0)
             if let hero {
-                heroPanel(hero.entry, hero.title)
-                    .frame(width: max(width - inset - RexChrome.contentTrailing, 560))
+                heroPanel(hero.title, scale: scale)
+                    .padding(.leading, inset)
             }
+            carouselDots(scale: scale)
+                .frame(maxWidth: .infinity)
+                .padding(.leading, inset)
+                .padding(.trailing, RexChrome.contentTrailing * scale)
+                .padding(.top, 28 * scale)
         }
-        .padding(.leading, inset)
-        .padding(.trailing, RexChrome.contentTrailing)
-        .padding(.bottom, 8)
         .frame(height: height)
         .contentShape(Rectangle())
         .onHover { heroHovered = $0 }
     }
 
-    private func heroPanel(_ entry: CatalogEntry, _ title: TMDBTitle) -> some View {
-        HeroInfoPanel(title: title, meta: HeroMeta.parts(title, isSeries: title.ref.type == .tv),
-                             rating: title.voteAverage, level: entry.level, note: entry.reason, overview: title.overview) {
-            EmptyView()
-        } actions: {
-            if heroes.count > 1 {
-                HStack(spacing: 2) {
-                    ForEach(heroes.indices, id: \.self) { index in
-                        Button { heroIndex = index } label: {
-                            Circle()
-                                .fill(.white.opacity(heroIndex == index ? 1 : 0.35))
-                                .frame(width: 6, height: 6)
-                                .frame(width: 20, height: 28)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(ClickablePlainButtonStyle())
-                        .accessibilityLabel("切换至\(heroes[index].title.title)")
-                        .accessibilityValue(heroIndex == index ? "当前显示" : "")
+    private func heroPanel(_ title: TMDBTitle, scale: Double) -> some View {
+        NavigationLink(value: detailRoute(title.ref)) {
+            VStack(alignment: .leading, spacing: 0) {
+                TitleLogo(title: title, tmdb: model.tmdb, height: 150 * scale, maxWidth: 260 * scale)
+                Text((Array(title.genres.prefix(2)) + [title.releaseDate ?? title.year.map(String.init)]
+                    .compactMap { $0 }).joined(separator: " · "))
+                    .font(.system(size: 14 * scale, weight: .semibold))
+                    .padding(.top, 12 * scale)
+                Text(title.overview ?? "")
+                    .font(.system(size: 14 * scale, weight: .medium))
+                    .lineSpacing(2 * scale)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.top, 6 * scale)
+                if let rating = title.voteAverage {
+                    HStack(spacing: 4 * scale) {
+                        RatingBadge(.tmdb, text: "TMDB")
+                        Text(String(format: "%.1f", rating))
+                            .font(.system(size: 12 * scale, weight: .semibold))
                     }
+                    .padding(.top, 6 * scale)
                 }
             }
-            NavigationLink(value: detailRoute(title.ref)) { Image(systemName: "info.circle") }
-                .help("详情").accessibilityLabel("详情")
+            .frame(width: 300 * scale, alignment: .leading)
+            .foregroundStyle(.white)
         }
+        .buttonStyle(ClickablePlainButtonStyle())
+        .accessibilityLabel("查看\(title.title)详情")
+    }
+
+    private func carouselDots(scale: Double) -> some View {
+        HStack(spacing: 0) {
+            if heroes.count > 1 {
+                ForEach(heroes.indices, id: \.self) { index in
+                    Button { heroIndex = index } label: {
+                        Circle()
+                            .fill(.white.opacity(heroIndex == index ? 1 : 0.35))
+                            .frame(width: 6 * scale, height: 6 * scale)
+                            .frame(width: 16 * scale, height: 24 * scale)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(ClickablePlainButtonStyle())
+                    .accessibilityLabel("切换至\(heroes[index].title.title)")
+                    .accessibilityValue(heroIndex == index ? "当前显示" : "")
+                }
+            }
+        }
+        .frame(height: 24 * scale)
     }
 
     /// 还没填写 TMDB 密钥时的引导。
@@ -165,25 +196,25 @@ struct HomeView: View {
         .padding(.leading, inset)
     }
 
-    private var continueRow: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            rowTitle("继续学习")
+    private func continueRow(scale: Double) -> some View {
+        VStack(alignment: .leading, spacing: 10 * scale) {
+            Text("继续观看")
+                .font(.system(size: 15 * scale, weight: .semibold))
+                .padding(.leading, inset)
             ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 16) {
-                    ForEach(resume, id: \.item.id) { entry in
-                        ItemCard(item: entry.item, landscape: true)
-                            .frame(width: 260)
-                            .environment(\.embyClient, model.server(entry.serverID)?.client)
-                            .environment(\.embyServerID, entry.serverID)
+                LazyHStack(alignment: .top, spacing: 18 * scale) {
+                    ForEach(resume.indices, id: \.self) { index in
+                        let entry = resume[index]
+                        HomeResumeCard(serverID: entry.serverID, item: entry.item, scale: scale)
+                            .frame(width: 250 * scale)
                     }
                 }
                 .padding(.leading, inset)
-                .padding(.trailing, RexChrome.contentTrailing)
-                .padding(.vertical, 6)
+                .padding(.trailing, RexChrome.contentTrailing * scale)
+                .padding(.vertical, 4 * scale)
             }
             .scrollIndicators(.never)
             .fixedSize(horizontal: false, vertical: true)
-            .mediaCardStyle(LandscapeTileStyle())
         }
     }
 
@@ -230,7 +261,92 @@ struct HomeView: View {
             all += items.map { (server.id, $0) }
         }
         guard !Task.isCancelled else { return }
-        resume = all.map { (serverID: $0.0, item: $0.1) }
+        resume = all.sorted { ($0.1.userData?.lastPlayedDate ?? "") > ($1.1.userData?.lastPlayedDate ?? "") }
+            .map { (serverID: $0.0, item: $0.1) }
+    }
+}
+
+private struct HomeResumeCard: View {
+    let serverID: String
+    let item: EmbyItem
+    let scale: Double
+    @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
+
+    private var play: PlayAction { PlayAction(openWindow: openWindow, model: model, serverID: serverID) }
+
+    private var imageURL: URL? {
+        let client = model.server(serverID)?.client
+        return client?.imageURL(for: item, type: .backdrop, maxWidth: 720)
+            ?? client?.imageURL(for: item, type: .thumb, maxWidth: 720)
+    }
+
+    private var episode: String? {
+        guard item.kind == .episode, let number = item.indexNumber else { return nil }
+        return item.parentIndexNumber.map { "第 \($0) 季 · 第 \(number) 集" } ?? "第 \(number) 集"
+    }
+
+    private var playbackTime: String {
+        if let raw = item.userData?.lastPlayedDate,
+           let date = (try? Date(raw, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+            ?? (try? Date(raw, strategy: .iso8601)) {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.locale = Locale(identifier: "zh_CN")
+            return formatter.localizedString(for: date, relativeTo: .now)
+        }
+        return item.remainingText ?? item.runtimeText ?? "继续观看"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2 * scale) {
+            Button { play(item) } label: {
+                VStack(alignment: .leading, spacing: 7 * scale) {
+                    Color.clear
+                        .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                        .overlay { RemoteImage(url: imageURL, maxPixelSize: 720) }
+                        .clipped()
+                        .overlay(alignment: .bottom) {
+                            if let progress = item.progress {
+                                ProgressCapsule(value: progress, height: 2 * scale)
+                                    .padding(.horizontal, 10 * scale)
+                                    .padding(.bottom, 9 * scale)
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 12 * scale, style: .continuous))
+                    HStack(alignment: .firstTextBaseline, spacing: 6 * scale) {
+                        Text(item.cardTitle).font(.system(size: 15 * scale, weight: .semibold))
+                        if let episode {
+                            Text(episode).font(.system(size: 12 * scale, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.65))
+                        }
+                    }
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(ClickablePlainButtonStyle())
+            .accessibilityLabel("继续观看\(item.cardTitle)\(episode.map { "，\($0)" } ?? "")")
+            HStack {
+                Text(playbackTime).font(.system(size: 12 * scale, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                Spacer(minLength: 0)
+                Menu { playbackActions } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 13 * scale, weight: .semibold))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("\(item.cardTitle)播放选项")
+            }
+        }
+        .foregroundStyle(.white)
+        .contextMenu { playbackActions }
+    }
+
+    @ViewBuilder private var playbackActions: some View {
+        Button("继续播放") { play(item) }
+        Button("从头播放") { play(item, resume: false) }
     }
 }
 
@@ -257,7 +373,7 @@ struct TitleLogo: View {
 
 #Preview("首页 · 初始状态") {
     NavigationStack {
-        HomeView(openLibraryPage: {})
+        HomeView(openLibraryPage: {}, windowHeight: 760)
     }
     .appEnvironment(AppModel())
     .frame(width: 1200, height: 760)

@@ -17,6 +17,7 @@ public struct ServerInfo: Hashable, Codable, Sendable {
 }
 
 public struct UserItemData: Hashable, Codable, Sendable {
+    public var lastPlayedDate: String?
     public var playbackPositionTicks: Int64?
     public var playedPercentage: Double?
     public var played: Bool?
