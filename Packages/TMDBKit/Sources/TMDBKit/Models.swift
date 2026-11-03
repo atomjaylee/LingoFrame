@@ -46,6 +46,8 @@ public struct TMDBTitle: Hashable, Sendable {
     public var originalLanguage: String?
     public var posterPath: String?
     public var backdropPath: String?
+    /// 全屏轮播使用图库中分辨率最高的横图。
+    public var highResolutionBackdropPath: String? = nil
     /// 片名 Logo（透明 PNG），优先英文，其次中文、无文字。
     public var logoPath: String?
     public var cast: [TMDBCast]
@@ -187,12 +189,13 @@ extension TMDBTitle {
         let recommended = backdrops.first {
             $0.filePath == raw.backdropPath && ($0.width ?? 0) >= 2560 && ($0.height ?? 0) >= 1440
         }
-        let backdrop = (recommended ?? backdrops.max { lhs, rhs in
+        let highestResolution = backdrops.max { lhs, rhs in
             let leftPixels = (lhs.width ?? 0) * (lhs.height ?? 0)
             let rightPixels = (rhs.width ?? 0) * (rhs.height ?? 0)
             return leftPixels == rightPixels
                 ? (lhs.voteAverage ?? 0) < (rhs.voteAverage ?? 0) : leftPixels < rightPixels
-        })?.filePath ?? raw.backdropPath
+        }
+        let backdrop = (recommended ?? highestResolution)?.filePath ?? raw.backdropPath
         self.init(
             ref: TMDBRef(type: type, id: raw.id),
             title: raw.title ?? raw.name ?? "",
@@ -208,6 +211,7 @@ extension TMDBTitle {
             originalLanguage: raw.originalLanguage,
             posterPath: raw.posterPath,
             backdropPath: backdrop,
+            highResolutionBackdropPath: highestResolution?.filePath ?? raw.backdropPath,
             logoPath: (best("en") ?? best("zh") ?? best(nil) ?? logos.first)?.filePath,
             cast: (raw.credits?.cast ?? []).sorted { ($0.order ?? 999) < ($1.order ?? 999) }.prefix(12).map {
                 TMDBCast(id: $0.id, name: $0.name, character: $0.character, profilePath: $0.profilePath)

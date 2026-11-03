@@ -4,18 +4,20 @@ import SwiftUI
 import TMDBKit
 
 /// 首页：适合学英语的剧集和电影推荐，信息和高清海报、背景、片名 Logo 都来自 TMDB。
-/// 照抄 Rex：精选作品的高清剧照铺满整个窗口并固定不动，第一屏底部是片名 Logo、评分、简介和胶囊按钮，
-/// 往下滚动时「继续学习」和按难度分组的海报行从剧照上滑过。资源库里已经有的作品可以直接播放。
+/// 精选作品的高清剧照铺满整个窗口，第一屏底部显示片名 Logo、评分、简介和轮播圆点，
+/// 往下滚动时「继续学习」和按难度分组的海报行从剧照上滑过。
 struct HomeView: View {
     let openLibraryPage: () -> Void
 
     @Environment(AppModel.self) private var model
     @Environment(\.contentLeadingInset) private var inset
-    @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var resume: [(serverID: String, item: EmbyItem)] = []
     @State private var heroIndex = 0
+    @State private var heroHovered = false
 
     private var store: RecommendationStore { model.recommendations }
 
@@ -27,11 +29,20 @@ struct HomeView: View {
         heroes.indices.contains(heroIndex) ? heroes[heroIndex] : heroes.first
     }
 
+    private func backdropURL(_ title: TMDBTitle?) -> URL? {
+        model.tmdb?.imageURL(title?.highResolutionBackdropPath ?? title?.backdropPath, size: .original)
+    }
+
+    private var nextBackdropURL: URL? {
+        guard heroes.count > 1 else { return nil }
+        return backdropURL(heroes[(heroIndex + 1) % heroes.count].title)
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 if model.tmdb != nil {
-                    HeroBackdrop(url: model.tmdb?.imageURL(hero?.title.backdropPath, size: .original))
+                    HeroBackdrop(url: backdropURL(hero?.title))
                         .id(hero?.title.ref)
                         .transition(.opacity)
                 }
@@ -53,7 +64,7 @@ struct HomeView: View {
                 .scrollIndicators(.never)
             }
             .ignoresSafeArea()
-            .animation(.easeInOut(duration: 0.35), value: hero?.title.ref)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: hero?.title.ref)
         }
         // 剧照铺满整页时文字一律白色；还没有 TMDB 时跟随外观设置。
         .environment(\.colorScheme, model.tmdb == nil ? colorScheme : .dark)
@@ -67,6 +78,18 @@ struct HomeView: View {
             if let tmdb = model.tmdb { await store.load(using: tmdb) }
         }
         .task(id: model.servers.map { "\($0.id)-\($0.state)" }) { await loadResume() }
+        .task(id: nextBackdropURL) {
+            guard let url = nextBackdropURL else { return }
+            _ = try? await ImagePipeline.shared.image(for: url, maxPixelSize: 4096)
+        }
+        .task(id: hero?.title.ref) {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(7))
+                guard !Task.isCancelled else { return }
+                guard heroes.count > 1, !heroHovered, scenePhase == .active, !reduceMotion else { continue }
+                heroIndex = (heroIndex + 1) % heroes.count
+            }
+        }
     }
 
     // MARK: 第一屏
@@ -83,30 +106,30 @@ struct HomeView: View {
         .padding(.trailing, RexChrome.contentTrailing)
         .padding(.bottom, 8)
         .frame(height: height)
+        .contentShape(Rectangle())
+        .onHover { heroHovered = $0 }
     }
 
     private func heroPanel(_ entry: CatalogEntry, _ title: TMDBTitle) -> some View {
-        let match = model.match(title.ref)
-        return HeroInfoPanel(title: title, meta: HeroMeta.parts(title, isSeries: title.ref.type == .tv),
+        HeroInfoPanel(title: title, meta: HeroMeta.parts(title, isSeries: title.ref.type == .tv),
                              rating: title.voteAverage, level: entry.level, note: entry.reason, overview: title.overview) {
-            if let match, title.ref.type == .movie {
-                Button { PlayAction(openWindow: openWindow, model: model, serverID: match.serverID)(match.item) } label: {
-                    PillLabel(match.item.resumePositionSeconds == nil ? "播放" : "继续播放")
-                }
-                .buttonStyle(RexPillButtonStyle())
-            } else {
-                NavigationLink(value: detailRoute(title.ref)) {
-                    PillLabel(match == nil ? "查看详情" : "选集播放", systemImage: match == nil ? "info.circle" : "play.fill")
-                }
-                .buttonStyle(RexPillButtonStyle(dimmed: match == nil))
-            }
+            EmptyView()
         } actions: {
             if heroes.count > 1 {
-                Button { heroIndex = (heroIndex + heroes.count - 1) % heroes.count } label: { Image(systemName: "chevron.left") }
-                    .help("上一部").accessibilityLabel("上一部")
-                Text("\(heroIndex + 1) / \(heroes.count)").font(.system(size: 13, weight: .semibold)).monospacedDigit()
-                Button { heroIndex = (heroIndex + 1) % heroes.count } label: { Image(systemName: "chevron.right") }
-                    .help("下一部").accessibilityLabel("下一部")
+                HStack(spacing: 2) {
+                    ForEach(heroes.indices, id: \.self) { index in
+                        Button { heroIndex = index } label: {
+                            Circle()
+                                .fill(.white.opacity(heroIndex == index ? 1 : 0.35))
+                                .frame(width: 6, height: 6)
+                                .frame(width: 20, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(ClickablePlainButtonStyle())
+                        .accessibilityLabel("切换至\(heroes[index].title.title)")
+                        .accessibilityValue(heroIndex == index ? "当前显示" : "")
+                    }
+                }
             }
             NavigationLink(value: detailRoute(title.ref)) { Image(systemName: "info.circle") }
                 .help("详情").accessibilityLabel("详情")

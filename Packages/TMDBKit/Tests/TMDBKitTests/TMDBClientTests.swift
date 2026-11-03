@@ -63,6 +63,7 @@ private let officeJSON = """
     #expect(t.overview == "A mockumentary.")
     #expect(t.year == 2005)
     #expect(t.logoPath == "/en2.png")
+    #expect(t.highResolutionBackdropPath == "/b.jpg")
     #expect(t.cast.map(\.name) == ["Steve Carell", "Rainn Wilson"])
     #expect(t.seasons.map(\.number) == [1])
     #expect(t.runtimeMinutes == 22)
@@ -76,6 +77,7 @@ private let officeJSON = """
     let client = TMDBClient(token: "0123456789abcdef0123456789abcdef", config: config("high-res.test"), session: session, cacheDirectory: nil)
     let title = try await client.details(TMDBRef(type: .tv, id: 2316))
     #expect(title.backdropPath == "/4k.jpg")
+    #expect(title.highResolutionBackdropPath == "/4k.jpg")
     #expect(client.imageURL(title.backdropPath, size: .original)?.path == "/t/p/original/4k.jpg")
 }
 
@@ -86,6 +88,8 @@ private let officeJSON = """
     let client = TMDBClient(token: "0123456789abcdef0123456789abcdef", config: config("recommended-backdrop.test"), session: session, cacheDirectory: nil)
     let title = try await client.details(TMDBRef(type: .tv, id: 1668))
     #expect(title.backdropPath == "/recommended.jpg")
+    #expect(title.highResolutionBackdropPath == "/larger.jpg")
+    #expect(client.imageURL(title.highResolutionBackdropPath, size: .original)?.path == "/t/p/original/larger.jpg")
     #expect(client.imageURL(title.backdropPath, size: .original)?.path == "/t/p/original/recommended.jpg")
 }
 
