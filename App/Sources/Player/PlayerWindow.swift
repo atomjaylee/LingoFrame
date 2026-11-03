@@ -421,6 +421,8 @@ private struct StatusOverlay: View {
                     }
                     .buttonStyle(RexPrimaryButtonStyle())
                     .padding(.top, theme.metrics.space(2))
+                    AutoAdvanceCountdown { Task { await session.play(itemID: next.id, resume: false) } }
+                        .id(next.id)
                 } else {
                     Text("播放完毕").themedFont(.title2)
                     Button { session.engine.play() } label: { PrimaryButtonLabel("重新播放", systemImage: "arrow.counterclockwise") }
@@ -438,6 +440,36 @@ private struct StatusOverlay: View {
             .background(theme.colors.popoverFill.color, in: RoundedRectangle(cornerRadius: theme.metrics.radiusXl, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: theme.metrics.radiusXl, style: .continuous)
                 .strokeBorder(theme.colors.glassStroke.color, lineWidth: 1))
+    }
+}
+
+/// 播完一集后倒数几秒自动播下一集，可以取消；下一集通常已在最后几分钟预加载好。
+private struct AutoAdvanceCountdown: View {
+    let advance: @MainActor () -> Void
+    @Environment(\.theme) private var theme
+    @State private var remaining = 10
+    @State private var cancelled = false
+
+    var body: some View {
+        HStack(spacing: theme.metrics.space(2)) {
+            if cancelled {
+                Text("已取消自动播放")
+            } else {
+                Text("\(remaining) 秒后自动播放").monospacedDigit()
+                Button("取消") { cancelled = true }
+                    .buttonStyle(RexTextButtonStyle())
+            }
+        }
+        .themedFont(.subhead)
+        .foregroundStyle(theme.colors.inkMuted.color)
+        .task {
+            while remaining > 0 {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, !cancelled else { return }
+                remaining -= 1
+            }
+            advance()
+        }
     }
 }
 
@@ -535,7 +567,7 @@ private struct ControlBar: View {
                             session.toggleMute()
                         }
                         ThinSlider(value: Binding(get: { engine.isMuted ? 0 : Double(engine.volume) },
-                                                  set: { engine.volume = Float($0); engine.isMuted = false }))
+                                                  set: { session.setVolume(Float($0)) }))
                             .frame(width: compact ? 70 : 120)
                             .accessibilityLabel("音量")
                         Spacer()

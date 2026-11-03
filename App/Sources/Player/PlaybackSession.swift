@@ -805,14 +805,37 @@ final class PlaybackSession {
     }
 
     func changeVolume(by delta: Float) {
-        engine.volume = min(max(engine.volume + delta, 0), 1)
-        engine.isMuted = false
+        setVolume(engine.volume + delta)
         flash("音量 \(Int((engine.volume * 100).rounded()))%")
+    }
+
+    func setVolume(_ volume: Float) {
+        engine.volume = min(max(volume, 0), 1)
+        engine.isMuted = false
+        Self.saveAudio(of: engine)
     }
 
     func toggleMute() {
         engine.isMuted.toggle()
+        Self.saveAudio(of: engine)
         flash(engine.isMuted ? "静音" : "取消静音")
+    }
+
+    // MARK: 音量偏好
+
+    private static let volumeKey = "player.volume"
+    private static let mutedKey = "player.muted"
+
+    /// 重启 App 后沿用上次的音量和静音状态。
+    static func restoreAudio(of engine: NativePlayerEngine) {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: volumeKey) != nil { engine.volume = defaults.float(forKey: volumeKey) }
+        engine.isMuted = defaults.bool(forKey: mutedKey)
+    }
+
+    private static func saveAudio(of engine: NativePlayerEngine) {
+        UserDefaults.standard.set(engine.volume, forKey: volumeKey)
+        UserDefaults.standard.set(engine.isMuted, forKey: mutedKey)
     }
 
     func flash(_ message: String) {
@@ -880,13 +903,18 @@ final class PlaybackSession {
             eventName: event)
     }
 
+    /// 停止上报送达后发出：Emby 已记下进度或已看状态，列表页可以重新读取「继续观看」。
+    static let watchProgressDidChange = Notification.Name("PlaybackSession.watchProgressDidChange")
+
     private func transmit(_ report: PlaybackReport, as kind: Report) async {
         guard let client else { return }
         do {
             switch kind {
             case .start: try await client.reportPlaybackStart(report)
             case .progress: try await client.reportPlaybackProgress(report)
-            case .stopped: try await client.reportPlaybackStopped(report)
+            case .stopped:
+                try await client.reportPlaybackStopped(report)
+                NotificationCenter.default.post(name: Self.watchProgressDidChange, object: nil)
             }
         } catch {
             // 上报失败不影响播放，只记日志。

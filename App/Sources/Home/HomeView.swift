@@ -85,7 +85,7 @@ struct HomeView: View {
         .task(id: model.tmdb.map(ObjectIdentifier.init)) {
             if let tmdb = model.tmdb { await store.load(using: tmdb) }
         }
-        .task(id: model.servers.map { "\($0.id)-\($0.state)" }) { await loadResume() }
+        .task(id: "\(model.servers.map { "\($0.id)-\($0.state)" })-\(model.watchProgressRevision)") { await loadResume() }
         .task(id: nextBackdropURL) {
             guard let url = nextBackdropURL else { return }
             _ = try? await ImagePipeline.shared.image(for: url, maxPixelSize: 4096)
@@ -274,15 +274,15 @@ struct HomeView: View {
     }
 
     private func loadResume() async {
-        var all: [(String, EmbyItem)] = []
+        var all: [(serverID: String, item: EmbyItem, lastPlayed: String?)] = []
         for server in model.servers where server.state != .offline {
-            let items = (try? await server.client.resumeItems()) ?? []
+            let entries = await server.client.continueWatching()
             guard !Task.isCancelled else { return }
-            all += items.map { (server.id, $0) }
+            all += entries.map { (server.id, $0.item, $0.lastPlayed) }
         }
         guard !Task.isCancelled else { return }
-        resume = all.sorted { ($0.1.userData?.lastPlayedDate ?? "") > ($1.1.userData?.lastPlayedDate ?? "") }
-            .map { (serverID: $0.0, item: $0.1) }
+        resume = all.sorted { ($0.lastPlayed ?? "") > ($1.lastPlayed ?? "") }
+            .map { (serverID: $0.serverID, item: $0.item) }
     }
 }
 
@@ -399,7 +399,8 @@ private struct HomeResumeCard: View {
             ?? (try? Date(raw, strategy: .iso8601)) {
             let formatter = RelativeDateTimeFormatter()
             formatter.locale = Locale(identifier: "zh_CN")
-            return formatter.localizedString(for: date, relativeTo: .now)
+            // 服务器时钟可能比本机快一点，刚播过的会显示成「1分钟后」，不让它超过现在。
+            return formatter.localizedString(for: min(date, .now), relativeTo: .now)
         }
         return item.remainingText ?? item.runtimeText ?? "继续观看"
     }

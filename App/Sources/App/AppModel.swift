@@ -110,6 +110,8 @@ final class AppModel {
     /// 单播放窗口当前要加载的请求；新请求复用同一个窗口和同一个播放内核。
     var playRequest: PlayRequest?
     var playRequestRevision: UInt64 = 0
+    /// 每次停止上报送达后递增；首页、资源库和详情页把它放进加载任务的 id，关掉播放器回来就是最新进度。
+    private(set) var watchProgressRevision: UInt64 = 0
     @ObservationIgnored private var preparedPlayback: PreparedPlayback?
     @ObservationIgnored private var prewarmTask: Task<Void, Never>?
     @ObservationIgnored private var preparationGeneration: UInt64 = 0
@@ -151,12 +153,17 @@ final class AppModel {
         rebuildTMDB()
 
         PlayerPanels.register(in: panels)
+        PlaybackSession.restoreAudio(of: playbackEngine)
         #if DEBUG
         DebugTools.install()
         #endif
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
                                                queue: .main) { [layoutStore] _ in
             MainActor.assumeIsolated { layoutStore.flush() }
+        }
+        NotificationCenter.default.addObserver(forName: PlaybackSession.watchProgressDidChange, object: nil,
+                                               queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.watchProgressRevision &+= 1 }
         }
     }
 

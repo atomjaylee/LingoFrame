@@ -131,6 +131,27 @@ public struct EmbyClient: Sendable {
         return page.items
     }
 
+    /// 「继续观看」：没看完的条目，加上看完一集后的下一集（同一部剧已有没看完的就不重复）。
+    /// 下一集本身没播放过，用整部剧的最近播放时间排序，和没看完的条目放在同一条时间线上。
+    public func continueWatching(limit: Int = 24) async -> [(item: EmbyItem, lastPlayed: String?)] {
+        async let resumeRequest = resumeItems(limit: limit)
+        async let nextUpRequest = nextUp(limit: limit)
+        let resume = (try? await resumeRequest) ?? []
+        let nextUp = (try? await nextUpRequest) ?? []
+        let seen = Set(resume.map(\.id)), busySeries = Set(resume.compactMap(\.seriesId))
+        let upcoming = nextUp.filter { !seen.contains($0.id) && !busySeries.contains($0.seriesId ?? "") }
+        let seriesIDs = Array(Set(upcoming.compactMap(\.seriesId)))
+        var seriesPlayed: [String: String] = [:]
+        if !seriesIDs.isEmpty, let page: ItemsPage = try? await transport.get("\(user)/Items", [
+            "Ids": seriesIDs.joined(separator: ","), "Fields": "UserDataLastPlayedDate", "EnableUserData": "true",
+        ]) {
+            for series in page.items { seriesPlayed[series.id] = series.userData?.lastPlayedDate }
+        }
+        let entries = resume.map { (item: $0, lastPlayed: $0.userData?.lastPlayedDate) }
+            + upcoming.map { (item: $0, lastPlayed: $0.seriesId.flatMap { seriesPlayed[$0] }) }
+        return entries.sorted { ($0.lastPlayed ?? "") > ($1.lastPlayed ?? "") }
+    }
+
     public func latest(in parentID: String, limit: Int = 24) async throws -> [EmbyItem] {
         try await transport.get("\(user)/Items/Latest", [
             "ParentId": parentID, "Limit": "\(limit)", "Fields": Self.listFields,

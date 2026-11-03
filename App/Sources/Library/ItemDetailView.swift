@@ -81,7 +81,7 @@ struct ItemDetailView: View {
         .environment(\.embyClient, client)
         .environment(\.embyServerID, serverID)
         .task(id: ref) { await loadTMDB() }
-        .task(id: match?.item.id) { await loadEmby() }
+        .task(id: "\(match?.item.id ?? "")-\(model.watchProgressRevision)") { await loadEmby() }
         .task(id: nextEpisode?.id) { await loadFocusEpisode() }
         .task(id: preheatItem?.id) {
             guard let serverID, let item = preheatItem else { return }
@@ -228,7 +228,7 @@ struct ItemDetailView: View {
             .scrollIndicators(.never)
             .fixedSize(horizontal: false, vertical: true)
         }
-        .task(id: seasonID) { await loadEpisodes() }
+        .task(id: "\(seasonID ?? "")-\(model.watchProgressRevision)") { await loadEpisodes() }
     }
 
     private func sourcesSection(_ item: EmbyItem, _ sources: [MediaSourceInfo]) -> some View {
