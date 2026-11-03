@@ -384,6 +384,7 @@ struct ItemDetailView: View {
 }
 
 /// 播放按钮本身作为进度条，填充只表达已播放比例，点击仍从保存的位置继续播放。
+/// 它是详情页唯一的主按钮：实心主按钮色打底，已播放部分用琥珀橙实色铺满，文字两种底色上都清晰。
 private struct DetailPlaybackButtonStyle: ButtonStyle {
     let progress: Double
     @Environment(\.theme) private var theme
@@ -391,19 +392,19 @@ private struct DetailPlaybackButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(theme.colors.onButtonPrimary.color)
             .fixedSize(horizontal: true, vertical: false)
             .frame(height: 45)
             .background {
                 GeometryReader { geometry in
-                    theme.colors.accentAmber.color.opacity(0.42)
+                    theme.colors.accentAmber.color
                         .frame(width: geometry.size.width * progress, height: geometry.size.height)
                 }
-                .clipShape(Capsule())
                 .allowsHitTesting(false)
             }
-            .background(.white.opacity(configuration.isPressed ? 0.24 : 0.16), in: Capsule())
-            .background(.ultraThinMaterial, in: Capsule())
+            .background(theme.colors.buttonPrimary.color)
+            .clipShape(Capsule())
+            .opacity(configuration.isPressed ? 0.85 : 1)
             .contentShape(Capsule())
             .clickablePointer()
             .animation(.easeOut(duration: 0.2), value: progress)
