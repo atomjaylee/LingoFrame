@@ -48,7 +48,7 @@ private func account(host: String) -> EmbyAccount {
     }
     let client = EmbyClient(account: account(host: "preloading.test"), identity: identity, session: session)
     let preloading = client.forPreloading()
-    #expect(preloading.playbackHTTPHeaders == ["User-Agent": "prePixon/0.1.0 (macOS)"])
+    #expect(preloading.playbackHTTPHeaders == ["User-Agent": "Pixon/0.1.0 (macOS)"])
     #expect(preloading.forPreloading().playbackHTTPHeaders == preloading.playbackHTTPHeaders)
     _ = try await preloading.playbackInfo(itemID: "pre", profile: .native)
     _ = try await preloading.subtitleText(itemID: "pre", mediaSourceID: "ms1", streamIndex: 2)

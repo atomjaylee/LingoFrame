@@ -204,7 +204,8 @@ final class AppModel {
             }
             // 不绑定详情页 View 的生命周期：用户点击播放导致页面消失时，已经开始的预热仍能完成。
             prewarmTask = Task.detached(priority: .userInitiated) {
-                _ = await NativePlayerEngine.prewarm(url: stream.url, httpHeaders: client.playbackHTTPHeaders)
+                _ = await NativePlayerEngine.prewarm(url: stream.url, httpHeaders: client.playbackHTTPHeaders,
+                                                     bitrate: stream.mediaSource.bitrate)
             }
         } catch is CancellationError {
             return

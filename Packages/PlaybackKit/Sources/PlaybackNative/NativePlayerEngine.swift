@@ -182,9 +182,26 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
                                       autoplay: autoplay))
     }
 
+    /// 预热多少秒的片源。引擎按 4 秒切段，AVPlayer 要等第一段写完、第二段开始才起播，
+    /// 预热不够这么多就会在首帧之后停在「正在缓冲」。
+    nonisolated static let prewarmSeconds: Double = 8
+    /// 引擎的预热缓存总共只收 64 MB（头部加尾部），单次留出尾部的余量。
+    nonisolated static let maximumPrewarmBytes = 56 * 1024 * 1024
+    /// 和引擎默认的预热字节数一致。
+    nonisolated static let minimumPrewarmBytes = 8 * 1024 * 1024
+
+    /// 按码率换算预热字节数：码率未知时用引擎默认的 8 MB，4K 高码率片源最多 56 MB。
+    nonisolated static func prewarmByteBudget(bitrate: Int?) -> Int {
+        let minimum = minimumPrewarmBytes
+        guard let bitrate, bitrate > 0 else { return minimum }
+        let bytes = Int(Double(bitrate) * prewarmSeconds / 8)
+        return min(max(bytes, minimum), maximumPrewarmBytes)
+    }
+
     @discardableResult
-    public nonisolated static func prewarm(url: URL, httpHeaders: [String: String] = [:]) async -> Bool {
-        _ = await AetherEngine.prewarm(url: url, httpHeaders: httpHeaders)
+    public nonisolated static func prewarm(url: URL, httpHeaders: [String: String] = [:], bitrate: Int? = nil) async -> Bool {
+        _ = await AetherEngine.prewarm(url: url, httpHeaders: httpHeaders,
+                                       byteBudget: prewarmByteBudget(bitrate: bitrate))
         return AetherEngine.isPrewarmed(url: url)
     }
 

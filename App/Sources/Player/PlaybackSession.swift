@@ -338,13 +338,21 @@ final class PlaybackSession {
         if let stopped { Task { await transmit(stopped, as: .stopped) } }
     }
 
-    /// 当前集稳定播放后提前解析下一集，并利用空闲网络连接预取开头 8 MB。
+    /// 剩余多少秒时开始准备下一集。太早会白取直链、占用起播带宽，直链也可能在用到之前过期。
+    private static let nextPreparationLeadSeconds: Double = 5 * 60
+
+    /// 当前集快播完时提前解析下一集，并利用空闲网络连接按码率预取开头约 8 秒。
     private func prepareNextItem(generation: UInt64) {
         nextPreparationTask?.cancel()
         preparedNext = nil
         guard let client = client?.forPreloading(), let serverID, let next = nextItem else { return }
         nextPreparationTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
+            while true {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, !Task.isCancelled, generation == self.loadGeneration else { return }
+                let duration = self.engine.duration > 0 ? self.engine.duration : (self.durationHint ?? 0)
+                if duration > 0, duration - self.engine.currentTime <= Self.nextPreparationLeadSeconds { break }
+            }
             guard let self, !Task.isCancelled, generation == self.loadGeneration else { return }
             do {
                 async let itemRequest = client.item(next.id)
@@ -356,7 +364,8 @@ final class PlaybackSession {
                 let stream = try client.resolveOriginalStream(itemID: item.id, info: info)
                 preparedNext = PreparedPlayback(serverID: serverID, item: item, stream: stream,
                                                 startAt: item.resumePositionSeconds, isPrewarmed: false)
-                let warmed = await NativePlayerEngine.prewarm(url: stream.url, httpHeaders: client.playbackHTTPHeaders)
+                let warmed = await NativePlayerEngine.prewarm(url: stream.url, httpHeaders: client.playbackHTTPHeaders,
+                                                             bitrate: stream.mediaSource.bitrate)
                 guard !Task.isCancelled, generation == loadGeneration,
                       preparedNext?.item.id == item.id else { return }
                 preparedNext?.isPrewarmed = warmed

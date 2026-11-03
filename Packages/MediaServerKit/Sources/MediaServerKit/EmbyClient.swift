@@ -90,9 +90,10 @@ public struct EmbyClient: Sendable {
     }
 
     /// 媒体请求不携带接口认证头到重定向地址。
-    public var playbackHTTPHeaders: [String: String] { ["User-Agent": transport.userAgent] }
+    /// 预加载也用正式 UA：播放引擎只在请求头完全一致时接管预热的数据，UA 不同会从头再取一次直链。
+    public var playbackHTTPHeaders: [String: String] { ["User-Agent": transport.identity.userAgent] }
 
-    /// 预加载使用单独的 UA，用户、设备和认证信息保持一致，不影响正式播放。
+    /// 预加载的接口请求使用单独的 UA，用户、设备和认证信息保持一致，不影响正式播放。
     public func forPreloading() -> EmbyClient {
         var client = self
         client.transport.isPreloading = true
