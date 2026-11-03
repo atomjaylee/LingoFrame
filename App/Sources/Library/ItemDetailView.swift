@@ -11,6 +11,7 @@ struct ItemDetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.contentLeadingInset) private var inset
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var info: TMDBTitle?
     @State private var full: EmbyItem?
@@ -91,8 +92,13 @@ struct ItemDetailView: View {
     // MARK: 第一屏
 
     private func hero(height: Double, width: Double) -> some View {
-        ZStack(alignment: .bottomLeading) {
+        let motionEnabled = !reduceMotion
+        return ZStack(alignment: .bottomLeading) {
             HeroBackdrop(url: backdropURL, fadeTo: emby == nil ? nil : RexChrome.detailBase.color)
+                .visualEffect { background, geometry in
+                    let distance = abs(geometry.frame(in: .scrollView(axis: .vertical)).minY)
+                    return background.scaleEffect(motionEnabled ? 1 + min(distance / 350, 1) * 0.05 : 1)
+                }
             HeroInfoPanel(title: info, fallbackTitle: emby?.displayName ?? "",
                           meta: HeroMeta.parts(info, isSeries: isSeries, fallbackYear: emby?.productionYear,
                                                fallbackRuntime: emby?.runtimeText,
