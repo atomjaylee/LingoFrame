@@ -405,7 +405,12 @@ private struct StatusOverlay: View {
                 }
             }
         } else if state == .idle || engine.isWaitingForMedia {
-            DelayedLoadingOverlay(label: engine.isSeeking ? "正在跳转…" : engine.isBuffering ? "正在缓冲…" : "正在加载…")
+            // 首帧出来后 AVPlayer 还要预滚一小会儿才开始走，这段不算断粮；画面已经在了，短暂等待不再弹提示。
+            let prerollingOnFrame = engine.isPrerolling && engine.startupMilliseconds != nil
+            DelayedLoadingOverlay(label: engine.isSeeking ? "正在跳转…"
+                                      : engine.isBuffering && !engine.isPrerolling ? "正在缓冲…" : "正在加载…",
+                                  delay: prerollingOnFrame ? .seconds(1) : .milliseconds(120))
+                .id(prerollingOnFrame)
         } else if state == .ended {
             card {
                 if let next = session.nextItem {
@@ -439,6 +444,7 @@ private struct StatusOverlay: View {
 /// 缓存内的瞬时跳转不闪圈；真正等待网络或解码时才显示，并在恢复后立即移除。
 private struct DelayedLoadingOverlay: View {
     let label: String
+    var delay: Duration = .milliseconds(120)
     @State private var visible = false
 
     var body: some View {
@@ -455,7 +461,7 @@ private struct DelayedLoadingOverlay: View {
         .opacity(visible ? 1 : 0)
         .animation(.easeOut(duration: 0.14), value: visible)
         .task {
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             visible = true
         }

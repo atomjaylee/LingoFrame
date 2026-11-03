@@ -57,6 +57,9 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
     public private(set) var bufferedRanges: [BufferedRange] = []
     public private(set) var isSeeking = false
     public private(set) var isBuffering = false
+    /// 起播后 AVPlayer 还没真正走起来的预滚阶段。引擎此时已把状态记为播放中，
+    /// 这段等待也会被算作缓冲，界面应当把它当作加载而不是中途断粮。
+    public private(set) var isPrerolling = false
     public private(set) var presentationSize: CGSize = .zero
     public private(set) var audioOptions: [TrackOption] = []
     public private(set) var selectedAudioID: Int?
@@ -500,6 +503,8 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         backend.$duration.sink { [weak self] in self?.duration = $0 }.store(in: &cancellables)
         backend.$isSeeking.removeDuplicates().sink { [weak self] in self?.isSeeking = $0; self?.updateASSTimer() }.store(in: &cancellables)
         backend.$isBuffering.removeDuplicates().sink { [weak self] in self?.isBuffering = $0; self?.updateASSTimer() }.store(in: &cancellables)
+        backend.$playbackPhase.map { $0 == .loading }.removeDuplicates()
+            .sink { [weak self] in self?.isPrerolling = $0 }.store(in: &cancellables)
         backend.$residentRanges.sink { [weak self] ranges in
             self?.bufferedRanges = ranges.map { BufferedRange(lowerBound: $0.lowerBound, upperBound: $0.upperBound) }
         }.store(in: &cancellables)
