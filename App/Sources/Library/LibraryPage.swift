@@ -151,11 +151,12 @@ private struct ServerCard: View {
     }
 }
 
-/// 一台服务器里的媒体库：直接展开每个媒体库的片目，按最新入库顺序横向浏览。
+/// 一台服务器里的媒体库：最上面是这台服务器的「继续观看」，下面直接展开每个媒体库的片目，按最新入库顺序横向浏览。
 struct ServerLibrariesView: View {
     let serverID: String
     @Environment(AppModel.self) private var model
     @Environment(\.contentLeadingInset) private var inset
+    @State private var resume: [EmbyItem] = []
 
     var body: some View {
         let server = model.server(serverID)
@@ -168,6 +169,9 @@ struct ServerLibrariesView: View {
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
                     }
                     LazyVStack(alignment: .leading, spacing: 34) {
+                        if !resume.isEmpty {
+                            ResumeShelf(serverID: server.id, client: server.client, items: resume)
+                        }
                         ForEach(server.libraries) { library in
                             LibraryShelf(serverID: server.id, library: library, client: server.client)
                         }
@@ -178,6 +182,41 @@ struct ServerLibrariesView: View {
             .padding(.trailing, RexChrome.contentTrailing)
             .padding(.top, 50)
             .padding(.bottom, 48)
+        }
+        .task(id: server.map { "\($0.id)-\($0.state)-\(model.watchProgressRevision)" }) {
+            guard let server, server.state != .offline else { resume = []; return }
+            let loaded = await server.client.continueWatching().map(\.item)
+            guard !Task.isCancelled else { return }
+            resume = loaded
+        }
+    }
+}
+
+/// 这台服务器上没看完的片子，横版剧照卡片点击直接续播。
+private struct ResumeShelf: View {
+    let serverID: String
+    let client: EmbyClient
+    let items: [EmbyItem]
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("继续观看")
+                .font(.system(size: 17, weight: .semibold))
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 18) {
+                    ForEach(items) { item in
+                        ItemCard(item: item, landscape: true)
+                            .frame(width: 250)
+                            .environment(\.embyClient, client)
+                            .environment(\.embyServerID, serverID)
+                    }
+                }
+                .mediaCardStyle(LandscapeTileStyle())
+            }
+            .contentMargins(.horizontal, theme.metrics.space(2), for: .scrollContent)
+            .contentMargins(.vertical, 4, for: .scrollContent)
+            .padding(.horizontal, -theme.metrics.space(2))
         }
     }
 }

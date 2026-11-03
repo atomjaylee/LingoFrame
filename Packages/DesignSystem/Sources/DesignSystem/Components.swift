@@ -502,8 +502,11 @@ private struct LandscapeTileBody: View {
     var body: some View {
         let c = configuration
         VStack(alignment: .leading, spacing: theme.metrics.space(2)) {
-            RemoteImage(url: c.imageURL, maxPixelSize: 640)
+            // 先用空白占住 16:9，图片放在 overlay 里裁切；竖版海报也不会把卡片撑高。
+            Color.clear
                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .overlay { RemoteImage(url: c.imageURL, maxPixelSize: 640) }
+                .clipped()
                 .overlay(alignment: .bottom) {
                     if let p = c.progress, p > 0 {
                         ProgressCapsule(value: p).padding(.horizontal, theme.metrics.space(3)).padding(.bottom, theme.metrics.space(3))

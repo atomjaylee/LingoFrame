@@ -498,12 +498,20 @@ struct ItemCard: View {
         }
     }
 
+    /// 横版卡片和首页「继续观看」一致：先取横版背景图，没有再退到缩略图，避免单集的竖版主图。
+    private var landscapeImageURL: URL? {
+        guard landscape else { return nil }
+        return client?.imageURL(for: item, type: .backdrop, maxWidth: 640)
+            ?? client?.imageURL(for: item, type: .thumb, maxWidth: 640)
+    }
+
     private var card: some View {
         MediaCard(title: item.cardTitle,
                   code: item.kind == .episode ? item.episodeCode : nil,
-                  subtitle: landscape ? [item.remainingText, item.kind == .movie ? "电影" : nil].compactMap { $0 }.joined(separator: " · ")
+                  subtitle: landscape ? [item.remainingText ?? (item.progress == nil ? "下一集" : nil),
+                                      item.kind == .movie ? "电影" : nil].compactMap { $0 }.joined(separator: " · ")
                       : (item.kind == .episode ? item.name : item.productionYear.map(String.init)),
-                  imageURL: client?.imageURL(for: item, type: landscape ? .thumb : .primary, maxWidth: landscape ? 640 : 360),
+                  imageURL: landscapeImageURL ?? client?.imageURL(for: item, type: .primary, maxWidth: 360),
                   progress: item.progress, isPlayed: item.isPlayed)
     }
 }
