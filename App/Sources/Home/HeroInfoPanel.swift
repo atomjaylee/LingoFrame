@@ -119,6 +119,7 @@ enum HeroMeta {
 }
 
 /// 大图：铺满给定区域，左侧和底部压暗，保证上面的白字看得清。
+/// 图片比区域高时不居中裁切，而是让人脸或画面主体落在上半部分看得见的地方。
 struct HeroBackdrop: View {
     let url: URL?
     /// 底部渐隐到的颜色；nil 表示压成黑色。
@@ -126,19 +127,24 @@ struct HeroBackdrop: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var artwork: DecodedImage?
     @State private var artworkURL: URL?
+    @State private var focus = BackdropFocus.fallback
+
+    /// 焦点在区域里的目标位置：水平居中，竖直放在上部，避开底部的片名和简介。
+    private static let target = CGPoint(x: 0.5, y: 0.32)
 
     var body: some View {
         // 图片放在 overlay 里，按比例填满时不会把外面的布局撑宽。
         Color.clear
             .overlay {
-                ZStack {
-                    if let artwork {
-                        Image(decorative: artwork.cgImage, scale: 1)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .id(artworkURL)
-                            .transition(.opacity)
+                GeometryReader { geometry in
+                    ZStack(alignment: .topLeading) {
+                        if let artwork {
+                            focusedImage(artwork.cgImage, in: geometry.size)
+                                .id(artworkURL)
+                                .transition(.opacity)
+                        }
                     }
+                    .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
                 }
             }
             .clipped()
@@ -159,11 +165,31 @@ struct HeroBackdrop: View {
                 guard let url else { artwork = nil; artworkURL = nil; return }
                 let loaded = try? await ImagePipeline.shared.image(for: url, maxPixelSize: 4096)
                 guard !Task.isCancelled else { return }
+                // 焦点和图片一起换上，避免先居中显示再跳到焦点。
+                let point = if let loaded { await BackdropFocus.shared.point(for: loaded.cgImage, url: url) }
+                    else { BackdropFocus.fallback }
+                guard !Task.isCancelled else { return }
                 // 原图加载完成后再交叉淡化，切换时保留上一张，避免中途闪空白。
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.65)) {
                     artwork = loaded
                     artworkURL = url
+                    focus = point
                 }
             }
+    }
+
+    /// 等比放大到铺满，再平移让焦点尽量落在目标位置；平移不会露出图片以外的空白。
+    private func focusedImage(_ image: CGImage, in size: CGSize) -> some View {
+        let imageWidth = Double(image.width), imageHeight = Double(image.height)
+        let scale = max(size.width / imageWidth, size.height / imageHeight)
+        let width = imageWidth * scale, height = imageHeight * scale
+        func offset(_ target: Double, _ focus: Double, length: Double, container: Double) -> Double {
+            min(max(container * target - focus * length, container - length), 0)
+        }
+        return Image(decorative: image, scale: 1)
+            .resizable()
+            .frame(width: width, height: height)
+            .offset(x: offset(Self.target.x, focus.x, length: width, container: size.width),
+                    y: offset(Self.target.y, focus.y, length: height, container: size.height))
     }
 }
