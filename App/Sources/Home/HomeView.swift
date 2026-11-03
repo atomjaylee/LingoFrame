@@ -118,6 +118,16 @@ struct HomeView: View {
                 .padding(.top, 28 * scale)
         }
         .frame(height: height)
+        .background {
+            if let hero {
+                NavigationLink(value: detailRoute(hero.title.ref)) {
+                    Color.clear.contentShape(Rectangle())
+                }
+                .buttonStyle(ClickablePlainButtonStyle())
+                .accessibilityLabel("查看\(hero.title.title)海报详情")
+                .padding(.leading, inset)
+            }
+        }
         .overlay {
             if heroes.count > 1 {
                 HStack {
