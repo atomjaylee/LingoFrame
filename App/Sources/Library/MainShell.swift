@@ -264,21 +264,11 @@ private struct WindowChromeControls: View {
             WindowTrafficLights(window: window)
 
             Button(action: toggleSidebar) {
-                HStack(spacing: 8) {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 15, weight: .medium))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .rotationEffect(collapsed ? .degrees(-90) : .zero)
-                }
-                .foregroundStyle(.white.opacity(0.92))
-                .frame(width: 50, height: 28)
-                .background(.black.opacity(0.38), in: Capsule())
-                .overlay {
-                    Capsule().stroke(.white.opacity(0.2), lineWidth: 0.8)
-                }
-                .shadow(color: .black.opacity(0.22), radius: 1, y: 1)
-                .contentShape(Capsule())
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .frame(width: 50, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(ClickablePlainButtonStyle())
             .accessibilityLabel(collapsed ? "展开侧边栏" : "收起侧边栏")
