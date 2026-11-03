@@ -248,7 +248,10 @@ private struct LibraryShelf: View {
                     }
                     .mediaCardStyle(PosterTileStyle())
                 }
+                // 放大时借用两侧留白，抵消外边距以保持海报与标题对齐。
+                .contentMargins(.horizontal, theme.metrics.space(2), for: .scrollContent)
                 .contentMargins(.vertical, 4, for: .scrollContent)
+                .padding(.horizontal, -theme.metrics.space(2))
             }
         }
         .task(id: library.id) { await reload() }
