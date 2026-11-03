@@ -1,234 +1,283 @@
+import AppKit
 import DesignSystem
-import PlaybackKit
+import Foundation
 import SwiftUI
 import TMDBKit
-import Workspace
 
-/// 设置窗口，照抄 Rex：左边分组菜单，右边系统风格的分组设置项。
+/// 设置只保留实际可调整的偏好；连接细节默认收起，资源库由主窗口管理。
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
-    @State private var page: Page = .appearance
-    @State private var tmdbOK: Bool?
-
-    enum Page: Hashable { case tmdb, layout, cache, appearance }
-
-    var body: some View {
-        NavigationSplitView {
-            List(selection: $page) {
-                row(.tmdb, "TMDB", icon: "film.stack") {
-                    HStack(spacing: 4) {
-                        Circle().fill(tmdbOK == false ? Color.red : model.tmdb == nil ? Color.secondary : Color.green).frame(width: 6, height: 6)
-                        Text(tmdbOK == false ? "异常" : model.tmdb == nil ? "未配置" : "正常").foregroundStyle(.secondary)
-                    }
-                }
-                Section("播放体验") {
-                    row(.layout, "播放布局", icon: "rectangle.3.group") { EmptyView() }
-                    row(.cache, "缓存与预加载", icon: "externaldrive.badge.timemachine") { EmptyView() }
-                }
-                Section("使用偏好") {
-                    row(.appearance, "外观与交互", icon: "paintbrush.pointed") { EmptyView() }
-                }
-            }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(209)
-        } detail: {
-            Group {
-                switch page {
-                case .tmdb: TMDBSettings(status: $tmdbOK)
-                case .layout: LayoutSettings()
-                case .cache: CacheSettings()
-                case .appearance: AppearanceSettings()
-                }
-            }
-            .navigationTitle(title)
-        }
-        .frame(width: 820, height: 560)
-    }
-
-    private var title: String {
-        switch page {
-        case .tmdb: "数据与资源"
-        case .layout: "播放布局"
-        case .cache: "缓存与预加载"
-        case .appearance: "外观与交互"
-        }
-    }
-
-    private func row<Trailing: View>(_ page: Page, _ title: String, icon: String,
-                                     @ViewBuilder trailing: () -> Trailing) -> some View {
-        HStack {
-            Label(title, systemImage: icon)
-            Spacer()
-            trailing().font(.system(size: 11, weight: .medium))
-        }
-        .tag(page)
-    }
-}
-
-private struct CacheSettings: View {
-    var body: some View {
-        Form {
-            Section("播放缓存") {
-                LabeledContent("管理方式", value: "自动")
-                LabeledContent("空间策略", value: "按磁盘余量动态调整")
-                LabeledContent("清理时机", value: "退出播放后自动清理")
-            }
-            Section("预加载") {
-                LabeledContent("详情页预热", value: "片源开头数据")
-                LabeledContent("播放预读", value: "按网速与码率自动调整")
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-private struct AppearanceSettings: View {
     @Environment(ThemeStore.self) private var store
-
-    var body: some View {
-        @Bindable var store = store
-        Form {
-            Section("显示与启动") {
-                Picker("外观模式", selection: $store.appearance) {
-                    ForEach(ThemeAppearance.allCases, id: \.self) { appearance in
-                        Text(appearance.title).tag(appearance)
-                    }
-                }
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-/// TMDB：首页推荐和详情页的海报、Logo、简介都从这里获取。
-private struct TMDBSettings: View {
-    @Binding var status: Bool?
-    @Environment(AppModel.self) private var model
+    @Environment(\.theme) private var theme
+    @State private var showsAdvanced = false
     @State private var token = ""
     @State private var apiBase = ""
     @State private var imageBase = ""
-    @State private var testResult: String?
-    @State private var isTesting = false
+    @State private var isChecking = false
+    @State private var connectionOK: Bool?
+    @State private var connectionNote: String?
+    @State private var advancedNote: String?
+    @State private var advancedNoteIsError = false
 
     var body: some View {
-        Form {
-            Section {
-                LabeledContent("连接状态") {
-                    HStack(spacing: 8) {
-                        if isTesting { ProgressView().controlSize(.small) }
-                        if let testResult {
-                            Text(testResult).foregroundStyle(status == false ? Color.red : .secondary).lineLimit(1)
+        @Bindable var store = store
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                header
+                settingsSection("外观", icon: "paintbrush.pointed") {
+                    HStack {
+                        Text("外观模式")
+                        Spacer(minLength: 20)
+                        Picker("外观模式", selection: $store.appearance) {
+                            Text("跟随系统").tag(ThemeAppearance.system)
+                            Text("浅色").tag(ThemeAppearance.light)
+                            Text("深色").tag(ThemeAppearance.dark)
                         }
-                        Button("测试连接") { test() }.clickablePointer().disabled(isTesting)
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 280)
                     }
                 }
-                LabeledContent("API 密钥") {
-                    HStack {
-                        SecureField("", text: $token, prompt: Text(model.hasCustomTMDBToken ? "已保存密钥" : "尚未配置"))
-                            .frame(width: 200)
-                        Button("保存") { model.tmdbToken = token; token = "" }.clickablePointer().disabled(token.isEmpty)
-                        if model.hasCustomTMDBToken {
-                            Button("删除") { model.tmdbToken = "" }.clickablePointer()
-                        }
+                settingsSection("影视资料", icon: "photo.on.rectangle.angled") {
+                    connectionRow
+                    if let connectionNote {
+                        Text(connectionNote)
+                            .font(.system(size: 12))
+                            .foregroundStyle(connectionOK == false ? theme.colors.danger.color : theme.colors.inkMuted.color)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                }
-                LabeledContent("接口地址") {
-                    TextField("", text: $apiBase).frame(width: 300).onSubmit(saveAddresses)
-                }
-                LabeledContent("图片地址") {
+                    Divider()
                     HStack {
-                        TextField("", text: $imageBase).frame(width: 300).onSubmit(saveAddresses)
+                        Text("片名与简介语言")
+                        Spacer(minLength: 20)
+                        Picker("片名与简介语言", selection: Binding(
+                            get: { model.tmdbConfig.language },
+                            set: { language in
+                                var config = model.tmdbConfig
+                                config.language = language
+                                model.tmdbConfig = config
+                                resetConnectionStatus()
+                            }
+                        )) {
+                            Text("简体中文").tag("zh-CN")
+                            Text("繁體中文").tag("zh-TW")
+                            Text("English").tag("en-US")
+                        }
+                        .labelsHidden()
+                        .frame(width: 160)
+                        .disabled(isChecking)
+                    }
+                    Divider()
+                    DisclosureGroup("高级连接设置", isExpanded: $showsAdvanced) {
+                        advancedSettings.padding(.top, 14)
                     }
                 }
                 HStack {
+                    Text("ELEnglish")
                     Spacer()
-                    Button("恢复默认地址") {
-                        model.tmdbConfig = .default
-                        load()
-                    }
-                    .clickablePointer()
-                    Button("保存地址") { saveAddresses() }.clickablePointer()
+                    Text("版本 \(AppModel.appVersion)")
                 }
-            } header: {
-                Text("TMDB")
-            } footer: {
-                Text("密钥可以在 themoviedb.org 的「设置 → API」免费申请，只保存在这台电脑上。国内网络直连 TMDB 经常失败，可以把两个地址换成可用的代理。")
-                    .font(.caption).foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(theme.colors.inkMuted.color)
             }
-            Section("语言") {
-                Picker("简介与标题", selection: Binding(get: { model.tmdbConfig.language }, set: { lang in
-                    model.tmdbConfig = TMDBConfig(apiBase: model.tmdbConfig.apiBase, imageBase: model.tmdbConfig.imageBase, language: lang)
-                })) {
-                    Text("简体中文").tag("zh-CN")
-                    Text("繁體中文").tag("zh-TW")
-                    Text("English").tag("en-US")
-                }
-            }
+            .padding(28)
         }
-        .formStyle(.grouped)
-        .onAppear(perform: load)
+        .font(.system(size: 13))
+        .background(Color(nsColor: .windowBackgroundColor))
+        .navigationTitle("设置")
+        .frame(width: 640, height: 540)
+        .onAppear(perform: loadAddresses)
     }
 
-    private func load() {
+    private var header: some View {
+        HStack(spacing: 14) {
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 44, height: 44)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("设置").font(.system(size: 24, weight: .semibold))
+                Text("外观偏好与影视资料")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.colors.inkMuted.color)
+            }
+        }
+    }
+
+    private func settingsSection<Content: View>(_ title: String, icon: String,
+                                               @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 13, weight: .semibold))
+            VStack(alignment: .leading, spacing: 14, content: content)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .rexCard()
+        }
+    }
+
+    private var connectionRow: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("资料服务")
+                Text("TMDB · 提供海报、简介和演员资料")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.colors.inkMuted.color)
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 6) {
+                if isChecking {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Circle().fill(connectionColor).frame(width: 6, height: 6)
+                }
+                Text(connectionStatus).font(.system(size: 12))
+            }
+            .foregroundStyle(theme.colors.inkMuted.color)
+            Button(model.tmdb == nil ? "配置服务" : "检查连接") {
+                if model.tmdb == nil { showsAdvanced = true }
+                else { checkConnection() }
+            }
+            .clickablePointer()
+            .disabled(isChecking)
+        }
+    }
+
+    private var connectionStatus: String {
+        if isChecking { return "检查中" }
+        if let connectionOK { return connectionOK ? "连接正常" : "连接失败" }
+        return model.tmdb == nil ? "未配置" : "已配置"
+    }
+
+    private var connectionColor: Color {
+        guard let connectionOK else { return theme.colors.inkMuted.color }
+        return connectionOK ? theme.colors.success.color : theme.colors.danger.color
+    }
+
+    private var advancedSettings: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("仅在需要更换资料服务密钥或连接地址时调整。")
+                .font(.system(size: 12))
+                .foregroundStyle(theme.colors.inkMuted.color)
+            LabeledContent("访问密钥") {
+                HStack(spacing: 8) {
+                    SecureField(model.hasCustomTMDBToken ? "已保存密钥" : "填写访问密钥", text: $token)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("访问密钥")
+                        .onSubmit(saveToken)
+                    Button("保存密钥", action: saveToken)
+                        .clickablePointer()
+                        .disabled(token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            Text("密钥只保存在这台 Mac。")
+                .font(.system(size: 12))
+                .foregroundStyle(theme.colors.inkMuted.color)
+            LabeledContent("资料接口") {
+                TextField("https://api.themoviedb.org/3", text: Binding(
+                    get: { apiBase },
+                    set: { apiBase = $0; advancedNote = nil }
+                ))
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("资料接口地址")
+                    .onSubmit(saveAddresses)
+            }
+            LabeledContent("图片地址") {
+                TextField("https://image.tmdb.org/t/p", text: Binding(
+                    get: { imageBase },
+                    set: { imageBase = $0; advancedNote = nil }
+                ))
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("图片服务地址")
+                    .onSubmit(saveAddresses)
+            }
+            HStack(spacing: 10) {
+                if model.hasCustomTMDBToken {
+                    Button("移除密钥", role: .destructive) {
+                        model.tmdbToken = ""
+                        resetConnectionStatus()
+                        advancedNote = "已移除访问密钥"
+                        advancedNoteIsError = false
+                    }
+                    .clickablePointer()
+                }
+                Spacer(minLength: 8)
+                Button("恢复默认地址") {
+                    model.tmdbConfig = TMDBConfig(language: model.tmdbConfig.language)
+                    loadAddresses()
+                    resetConnectionStatus()
+                    advancedNote = "已恢复默认地址"
+                    advancedNoteIsError = false
+                }
+                .clickablePointer()
+                Button("保存地址", action: saveAddresses).clickablePointer()
+            }
+            .controlSize(.small)
+            if let advancedNote {
+                Text(advancedNote)
+                    .font(.system(size: 12))
+                    .foregroundStyle(advancedNoteIsError ? theme.colors.danger.color : theme.colors.inkMuted.color)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .disabled(isChecking)
+    }
+
+    private func loadAddresses() {
         apiBase = model.tmdbConfig.apiBase.absoluteString
         imageBase = model.tmdbConfig.imageBase.absoluteString
+    }
+
+    private func resetConnectionStatus() {
+        connectionOK = nil
+        connectionNote = nil
+    }
+
+    private func saveToken() {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        model.tmdbToken = trimmed
+        token = ""
+        resetConnectionStatus()
+        advancedNote = "访问密钥已保存"
+        advancedNoteIsError = false
     }
 
     private func saveAddresses() {
         guard let api = URL(string: apiBase.trimmingCharacters(in: .whitespaces)), api.host() != nil,
               let image = URL(string: imageBase.trimmingCharacters(in: .whitespaces)), image.host() != nil else {
-            testResult = "地址格式不正确"
+            advancedNote = "地址格式不正确，请填写完整网址。"
+            advancedNoteIsError = true
             return
         }
         model.tmdbConfig = TMDBConfig(apiBase: api, imageBase: image, language: model.tmdbConfig.language)
-        testResult = "已保存"
+        resetConnectionStatus()
+        advancedNote = "连接地址已保存"
+        advancedNoteIsError = false
     }
 
-    private func test() {
-        guard let tmdb = model.tmdb else { testResult = "还没有可用的密钥"; status = false; return }
-        isTesting = true
-        testResult = nil
+    private func checkConnection() {
+        let token = model.tmdbToken
+        let config = model.tmdbConfig
+        isChecking = true
+        connectionNote = nil
         Task {
-            defer { isTesting = false }
+            defer { isChecking = false }
+            // 检查连接必须实际请求服务，不能把已有资料缓存当作连接成功。
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            let session = URLSession(configuration: configuration)
+            defer { session.invalidateAndCancel() }
+            let client = TMDBClient(token: token, config: config, session: session, cacheDirectory: nil)
             do {
-                let hits = try await tmdb.search(.tv, query: "Friends", year: 1994)
-                testResult = hits.isEmpty ? "连接成功，但没有搜索结果" : "连接正常"
-                status = true
+                let hits = try await client.search(.tv, query: "Friends", year: 1994)
+                connectionOK = true
+                connectionNote = hits.isEmpty ? "连接成功，暂未查到测试资料。" : nil
             } catch {
-                testResult = error.localizedDescription
-                status = false
+                connectionOK = false
+                connectionNote = error.localizedDescription
             }
         }
-    }
-}
-
-private struct LayoutSettings: View {
-    @Environment(LayoutStore.self) private var store
-
-    var body: some View {
-        Form {
-            Section("布局预设") {
-                ForEach(store.presets) { preset in
-                    HStack {
-                        Text(preset.name)
-                        if preset.isBuiltin { Text("内置").font(.caption).foregroundStyle(.secondary) }
-                        Spacer()
-                        Button("应用") { store.apply(preset) }.clickablePointer()
-                        if !preset.isBuiltin {
-                            Button("删除", role: .destructive) { store.deletePreset(preset.id) }.clickablePointer()
-                        }
-                    }
-                }
-            }
-            Section {
-                Button("将当前布局存为预设") { store.saveCurrentAsPreset() }.clickablePointer()
-                Button("恢复默认布局") { store.apply(LayoutStore.defaultPreset) }.clickablePointer()
-            } footer: {
-                Text("在播放窗口里可以拖动面板分隔条、右键面板标签移动位置，布局会自动保存。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
     }
 }
 
