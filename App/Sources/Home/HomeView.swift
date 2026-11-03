@@ -286,7 +286,7 @@ struct HomeView: View {
     }
 }
 
-/// 当前页圆点兼作倒计时，计时更新只刷新这一枚按钮。
+/// 当前页圆点兼作倒计时：进度按逐帧时间计算，避免定时器累加带来的跳动；计时更新只刷新这一枚按钮。
 private struct CarouselPageButton: View {
     let title: String
     let isCurrent: Bool
@@ -294,22 +294,42 @@ private struct CarouselPageButton: View {
     let scale: Double
     let select: @MainActor () -> Void
     let advance: @MainActor () -> Void
-    @State private var progress = 0.0
+
+    private static let duration: TimeInterval = 7
+
+    /// 暂停前已经走过的秒数。
+    @State private var elapsed: TimeInterval = 0
+    /// 本段计时的起点，暂停时为 nil。
+    @State private var runStart: Date?
+    /// 重新计时时递增，用来重启切换任务。
+    @State private var cycle = 0
+
+    private var isRunning: Bool { isCurrent && !isPaused }
+
+    private func progress(at date: Date) -> Double {
+        let running = runStart.map { date.timeIntervalSince($0) } ?? 0
+        return min(max((elapsed + running) / Self.duration, 0), 1)
+    }
+
+    private func restart() {
+        elapsed = 0
+        runStart = isRunning ? .now : nil
+        cycle += 1
+    }
 
     var body: some View {
         Button {
-            progress = 0
+            if isCurrent { restart() }
             select()
         } label: {
             Group {
                 if isCurrent {
-                    Capsule().fill(.white.opacity(0.3))
-                        .frame(width: 28 * scale, height: 6 * scale)
-                        .overlay(alignment: .leading) {
-                            Capsule().fill(.white)
-                                .frame(width: 28 * scale * progress, height: 6 * scale)
-                        }
-                        .clipShape(Capsule())
+                    TimelineView(.animation(minimumInterval: nil, paused: !isRunning)) { context in
+                        Capsule().fill(.white.opacity(0.3))
+                            .overlay { CarouselProgressFill(progress: progress(at: context.date)).fill(.white) }
+                            .clipShape(Capsule())
+                            .frame(width: 28 * scale, height: 6 * scale)
+                    }
                 } else {
                     Circle().fill(.white.opacity(0.35))
                         .frame(width: 6 * scale, height: 6 * scale)
@@ -320,25 +340,36 @@ private struct CarouselPageButton: View {
         }
         .buttonStyle(ClickablePlainButtonStyle())
         .accessibilityLabel("切换至\(title)")
-        .accessibilityValue(isCurrent ? (isPaused ? "当前显示，轮播已暂停" : "当前显示，\(Int(ceil((1 - progress) * 7)))秒后切换") : "")
-        .onChange(of: isCurrent) { progress = 0 }
-        .task(id: isCurrent && !isPaused) {
-            guard isCurrent, !isPaused else { return }
-            var previousTick = ContinuousClock.now
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(33))
-                guard !Task.isCancelled else { return }
-                let now = ContinuousClock.now
-                let elapsed = previousTick.duration(to: now).components
-                previousTick = now
-                let seconds = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
-                progress = min(progress + seconds / 7, 1)
-                if progress >= 1 {
-                    advance()
-                    return
-                }
+        .accessibilityValue(isCurrent ? (isPaused ? "当前显示，轮播已暂停" : "当前显示，\(Int(ceil((1 - progress(at: .now)) * Self.duration)))秒后切换") : "")
+        .onAppear { if isRunning, runStart == nil { runStart = .now } }
+        .onChange(of: isCurrent) { restart() }
+        .onChange(of: isPaused) {
+            guard isCurrent else { return }
+            if isPaused {
+                if let runStart { elapsed += Date.now.timeIntervalSince(runStart) }
+                runStart = nil
+            } else {
+                runStart = .now
             }
         }
+        .task(id: "\(isRunning)-\(cycle)") {
+            guard isRunning else { return }
+            try? await Task.sleep(for: .seconds(max(Self.duration - elapsed, 0)))
+            guard !Task.isCancelled else { return }
+            advance()
+        }
+    }
+}
+
+/// 进度条的白色部分。用路径而不是改 frame 宽度来画：frame 会按整像素取整，
+/// 28pt 的条走 7 秒每 0.125 秒才挪一个像素，看起来一跳一跳；路径带抗锯齿，可以按亚像素平滑移动。
+private struct CarouselProgressFill: Shape {
+    var progress: Double
+
+    func path(in rect: CGRect) -> Path {
+        let width = rect.width * progress
+        return Path(roundedRect: CGRect(x: rect.minX, y: rect.minY, width: width, height: rect.height),
+                    cornerRadius: min(rect.height, width) / 2)
     }
 }
 
