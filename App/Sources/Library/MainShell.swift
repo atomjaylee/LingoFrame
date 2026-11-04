@@ -180,6 +180,47 @@ struct MainShell: View {
                 if match.kind == .series, let first = try? await server.client.episodes(of: match.id, season: nil).first { id = first.id }
                 model.showPlayer(.emby(serverID: server.id, itemID: id, resume: false), using: openWindow)
             }
+        case "isotest":
+            // 原盘起播、跳转、切音轨的耗时：isotest:片名
+            for _ in 0..<60 where server?.catalog.isEmpty ?? true { try? await Task.sleep(for: .seconds(1)) }
+            if let server, parts.count > 1, let match = server.catalog.first(where: { $0.cardTitle.contains(parts[1]) }) {
+                let session = PlaybackSession(client: server.client, serverID: server.id, engine: try! NativePlayerEngine())
+                let engine = session.engine
+                func waitPlaying(from target: Double?) async -> Bool {
+                    for _ in 0..<120 {
+                        if case .failed = engine.state { return false }
+                        if engine.state == .playing, target.map({ engine.currentTime >= $0 }) ?? true { return true }
+                        try? await Task.sleep(for: .milliseconds(250))
+                    }
+                    return false
+                }
+                var started = ContinuousClock.now
+                await session.play(itemID: match.id, resume: false)
+                var ok = await waitPlaying(from: nil)
+                NSLog("原盘 起播 %@ %@ 时长 %.0f 音轨 %d", ok ? "成功" : "失败", "\(started.duration(to: .now))",
+                      engine.duration, engine.audioOptions.count)
+                try? await Task.sleep(for: .seconds(8))
+                for target in [engine.duration * 0.5, engine.duration * 0.1] where engine.duration > 0 {
+                    started = .now
+                    await engine.seek(to: target, exact: false)
+                    ok = await waitPlaying(from: target - 10)
+                    NSLog("原盘 跳转到 %.0f %@ %@ 当前 %.1f", target, ok ? "成功" : "失败", "\(started.duration(to: .now))", engine.currentTime)
+                    let landed = engine.currentTime
+                    try? await Task.sleep(for: .seconds(10))
+                    NSLog("原盘 跳转后 10 秒前进 %.1f 状态 %@", engine.currentTime - landed, "\(engine.state)")
+                }
+                if let audio = engine.audioOptions.last, engine.audioOptions.count > 1 {
+                    started = .now
+                    engine.selectAudio(audio.id)
+                    try? await Task.sleep(for: .seconds(1))
+                    ok = await waitPlaying(from: nil)
+                    NSLog("原盘 切音轨 %@ %@ %@", audio.title, ok ? "成功" : "失败", "\(started.duration(to: .now))")
+                }
+                NSLog("原盘 结束 状态 %@ 解码 %@ 错误 %@", "\(engine.state)", engine.diagnostics().playbackType ?? "-", session.errorMessage ?? "-")
+                session.close()
+            }
+            try? await Task.sleep(for: .seconds(1))
+            NSLog("playtest done")
         case "soaktest":
             // 连续播放一段时间，检查长时间播放是否卡顿或中断：soaktest:片名:秒数
             for _ in 0..<60 where server?.catalog.isEmpty ?? true { try? await Task.sleep(for: .seconds(1)) }

@@ -20,6 +20,6 @@ let package = Package(
         ], path: "Sources/PlaybackNative", resources: [.copy("Resources/SubtitleRenderingNotices.txt")]),
         .target(name: "PlaybackKit", dependencies: ["PlaybackCore", "PlaybackNative"],
                 path: "Sources/PlaybackKitFacade"),
-        .testTarget(name: "PlaybackKitTests", dependencies: ["PlaybackKit"]),
+        .testTarget(name: "PlaybackKitTests", dependencies: ["PlaybackKit", "PlaybackNative"]),
     ]
 )

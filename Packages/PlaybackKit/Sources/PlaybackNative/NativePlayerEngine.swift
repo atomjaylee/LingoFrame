@@ -156,15 +156,22 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         lastError = nil
         resetASSRenderer()
         state = .loading
+        let discReader = await Self.discReader(for: source)
         let options = LoadOptions(
             httpHeaders: source.httpHeaders,
             preserveASSMarkup: true,
             declaredDurationSeconds: source.durationHint,
             progressiveSegmentDelivery: true,
             autoplay: source.autoplay,
+            // 原盘码率接近带宽时，AVPlayer 的防卡顿等待会让跳转拖到十几秒，软件路径没有这层等待。
+            preferredDecodePath: discReader == nil ? .automatic : .software,
             escalatesToSoftwarePath: true)
         do {
-            try await backend.load(url: source.url, startPosition: source.startAt, options: options)
+            if let discReader {
+                try await backend.load(source: .custom(discReader), startPosition: source.startAt, options: options)
+            } else {
+                try await backend.load(url: source.url, startPosition: source.startAt, options: options)
+            }
             configureASSRenderer(force: true)
             startLearningSubtitleChannel()
         } catch is CancellationError {
@@ -176,6 +183,17 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
             startupStartedAt = nil
             throw error
         }
+    }
+
+    /// 远程 ISO 走自己的读取器，只解析一次跳转。打不开时返回 nil，由引擎按普通地址处理。
+    private nonisolated static func discReader(for source: PlaybackSource) async -> DiscRangeReader? {
+        guard !source.url.isFileURL, DiscRangeReader.handles(source.url) else { return nil }
+        let url = source.url
+        let headers = source.httpHeaders
+        return await Task.detached(priority: .userInitiated) {
+            guard let disc = try? RemoteDiscSource(url: url, headers: headers) else { return nil }
+            return DiscRangeReader(source: disc)
+        }.value
     }
 
     public func load(url: URL, id: String? = nil, startAt: Double? = nil, autoplay: Bool = true,
@@ -203,6 +221,8 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
 
     @discardableResult
     public nonisolated static func prewarm(url: URL, httpHeaders: [String: String] = [:], bitrate: Int? = nil) async -> Bool {
+        // ISO 不走引擎的地址读取，预热结果用不上。
+        guard !DiscRangeReader.handles(url) else { return false }
         _ = await AetherEngine.prewarm(url: url, httpHeaders: httpHeaders,
                                        byteBudget: prewarmByteBudget(bitrate: bitrate))
         return AetherEngine.isPrewarmed(url: url)
