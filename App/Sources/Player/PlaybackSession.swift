@@ -64,6 +64,8 @@ final class PlaybackSession {
     private(set) var isLearningPanelVisible = false
     private var bitmapLearningSubtitle: SubtitleOption?
     var learningPrimarySubtitle: SubtitleOption? { primarySubtitle ?? bitmapLearningSubtitle }
+    /// 学习功能以英文字幕为主，没有时不提供入口。
+    var hasEnglishSubtitle: Bool { subtitleOptions.contains(where: \.isEnglish) }
     /// 没有可用字幕时的说明，比如「这个片源只有图形字幕」。
     private(set) var subtitleNote: String?
     private(set) var translationNote: String?
@@ -933,7 +935,8 @@ struct SubtitleOption: Identifiable, Hashable, Sendable {
     let isForced: Bool
 
     var isEnglish: Bool {
-        guard let l = language?.lowercased() else { return title.lowercased().contains("english") }
+        // “und”表示语言未标注，和没有语言字段一样只能看标题。
+        guard let l = language?.lowercased(), l != "und" else { return title.lowercased().contains("english") }
         return l == "eng" || l == "en" || l.hasPrefix("en-")
     }
 
