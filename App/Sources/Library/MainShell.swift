@@ -67,7 +67,7 @@ struct MainShell: View {
             }
             .environment(\.contentLeadingInset, inset)
 
-            Sidebar(section: $section)
+            Sidebar(section: section, select: select)
                 .environment(\.colorScheme, cinematicHome ? .dark : colorScheme)
                 .foregroundStyle(cinematicHome ? .white : theme.colors.ink.color)
                 .frame(width: RexChrome.sidebarWidth, height: max(viewport.height / chromeScale - RexChrome.sidebarInset * 2, 0))
@@ -113,15 +113,20 @@ struct MainShell: View {
             CGSize(width: $0.size.width, height: $0.size.height + $0.safeAreaInsets.top)
         } action: { viewport = $0 }
         .background(WindowAccessor { window = $0 })
-        .onChange(of: section) { path = NavigationPath() }
         .task { await model.refreshAll() }
         // 调试路由不等资源库刷新完：服务器慢的时候也能马上打开要检查的页面。
         .task { await openDebugRoute() }
     }
 
+    /// 切到某个分区并回到它的根页面；已在这个分区的子页面时，再点一次也要回到根页面。
+    private func select(_ newSection: ShellSection) {
+        section = newSection
+        path = NavigationPath()
+    }
+
     @ViewBuilder private var content: some View {
         switch section {
-        case .home: HomeView(openLibraryPage: { section = .library }, windowHeight: viewport.height)
+        case .home: HomeView(openLibraryPage: { select(.library) }, windowHeight: viewport.height)
         case .library: LibraryPage()
         case .search: SearchView()
         case .comingSoon(let title): ComingSoonView(title: title)
@@ -150,7 +155,7 @@ struct MainShell: View {
         let server = model.servers.first
         switch parts.first {
         case "library":
-            section = .library
+            select(.library)
         case "settings":
             try? await Task.sleep(for: .seconds(1))
             openSettings()
@@ -347,7 +352,8 @@ private struct WindowChromeControls: View {
 
 /// 照抄 Rex：搜索 / 发现 / 学习三组，每行 40 高、15 号半粗字，选中行浅白底；设置固定在最底下。
 private struct Sidebar: View {
-    @Binding var section: ShellSection
+    let section: ShellSection
+    let select: (ShellSection) -> Void
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -356,21 +362,21 @@ private struct Sidebar: View {
                 .frame(height: 32)
                 .padding(.bottom, 10)
 
-            row("搜索", icon: "magnifyingglass", isSelected: section == .search) { section = .search }
+            row("搜索", icon: "magnifyingglass", isSelected: section == .search) { select(.search) }
                 .keyboardShortcut("k", modifiers: .command)
             divider
 
             groupLabel("发现")
-            row("首页", icon: "house", isSelected: section == .home) { section = .home }
+            row("首页", icon: "house", isSelected: section == .home) { select(.home) }
             row("资源库", icon: "externaldrive", isSelected: section == .library,
-                trailing: model.servers.isEmpty ? nil : "\(model.servers.count)") { section = .library }
+                trailing: model.servers.isEmpty ? nil : "\(model.servers.count)") { select(.library) }
             divider
 
             groupLabel("学习")
-            row("在学", icon: "play.rectangle", isSelected: section == .comingSoon("在学")) { section = .comingSoon("在学") }
-            row("生词本", icon: "book.closed", isSelected: section == .comingSoon("生词本")) { section = .comingSoon("生词本") }
-            row("收藏的句子", icon: "text.quote", isSelected: section == .comingSoon("收藏的句子")) { section = .comingSoon("收藏的句子") }
-            row("学习日历", icon: "calendar", isSelected: section == .comingSoon("学习日历")) { section = .comingSoon("学习日历") }
+            row("在学", icon: "play.rectangle", isSelected: section == .comingSoon("在学")) { select(.comingSoon("在学")) }
+            row("生词本", icon: "book.closed", isSelected: section == .comingSoon("生词本")) { select(.comingSoon("生词本")) }
+            row("收藏的句子", icon: "text.quote", isSelected: section == .comingSoon("收藏的句子")) { select(.comingSoon("收藏的句子")) }
+            row("学习日历", icon: "calendar", isSelected: section == .comingSoon("学习日历")) { select(.comingSoon("学习日历")) }
 
             Spacer(minLength: 16)
             SettingsLink { rowLabel("设置", icon: "gearshape", isSelected: false, trailing: nil) }
