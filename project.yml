@@ -53,7 +53,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: ELEnglish
+        CFBundleDisplayName: Pixon
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "2"
         LSApplicationCategoryType: public.app-category.education
@@ -63,7 +63,7 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSLocalNetworkUsageDescription: 用于连接局域网中的 Emby 媒体服务器。
-        # 允许在访达里「用 ELEnglish 打开」本地视频。
+        # 允许在访达里「用 Pixon 打开」本地视频。
         CFBundleDocumentTypes:
           - CFBundleTypeName: Video
             CFBundleTypeRole: Viewer
@@ -76,7 +76,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.elenglish.mac
-        PRODUCT_NAME: ELEnglish
+        PRODUCT_NAME: Pixon
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual

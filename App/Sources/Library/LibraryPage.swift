@@ -85,7 +85,7 @@ struct LibraryPage: View {
                 if model.servers.isEmpty { isEditing = false }
             }
         } message: {
-            Text("只会从 ELEnglish 里移除，不会影响服务器上的文件。")
+            Text("只会从 Pixon 里移除，不会影响服务器上的文件。")
         }
     }
 

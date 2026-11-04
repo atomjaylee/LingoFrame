@@ -7,7 +7,7 @@ struct ELEnglishApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("ELEnglish", id: "main") {
+        WindowGroup("Pixon", id: "main") {
             RootView()
                 .appEnvironment(model)
                 .frame(minWidth: 1000, minHeight: 640)

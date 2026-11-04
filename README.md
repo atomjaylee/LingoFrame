@@ -1,4 +1,4 @@
-# ELEnglish
+# Pixon
 
 macOS 上的看剧学英语播放器：片源来自 Emby，底层播放对标 Infuse / SenPlayer，上层做逐句精听、点词查词、影子跟读。
 

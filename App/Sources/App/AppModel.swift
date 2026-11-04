@@ -131,7 +131,7 @@ final class AppModel {
             defaults.set(id, forKey: "device.id")
             return id
         }()
-        identity = ClientIdentity(appName: "ELEnglish", appVersion: Self.appVersion,
+        identity = ClientIdentity(appName: "Pixon", appVersion: Self.appVersion,
                                   deviceName: Host.current().localizedName ?? "Mac", deviceID: deviceID)
 
         #if DEBUG

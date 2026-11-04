@@ -73,7 +73,7 @@ struct SettingsView: View {
                     }
                 }
                 HStack {
-                    Text("ELEnglish")
+                    Text("Pixon")
                     Spacer()
                     Text("版本 \(AppModel.appVersion)")
                 }
