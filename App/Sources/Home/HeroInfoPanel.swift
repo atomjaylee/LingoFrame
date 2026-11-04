@@ -8,6 +8,7 @@ import TMDBKit
 struct HeroInfoPanel<Primary: View, Actions: View>: View {
     let title: TMDBTitle?
     var fallbackTitle = ""
+    var chineseName: String?
     let meta: [String]
     var rating: Double?
     var level: String?
@@ -26,6 +27,12 @@ struct HeroInfoPanel<Primary: View, Actions: View>: View {
                         TitleLogo(title: title, tmdb: model.tmdb, height: 90, maxWidth: 320)
                     } else {
                         Text(fallbackTitle).font(.system(size: 44, weight: .bold)).lineLimit(2)
+                    }
+                    if let chineseName {
+                        Text(chineseName)
+                            .font(.system(size: 20, weight: .semibold))
+                            .lineLimit(1)
+                            .padding(.top, 8)
                     }
                     metaLine.padding(.top, 12)
                     ratings.padding(.top, 5)

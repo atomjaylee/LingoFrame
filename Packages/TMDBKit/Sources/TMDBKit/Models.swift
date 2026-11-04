@@ -56,6 +56,15 @@ public struct TMDBTitle: Hashable, Sendable {
     public var releaseDate: String? = nil
     /// 出品国家或地区代码，比如 US、GB。
     public var countries: [String] = []
+    /// 片名 Logo 的语言，无文字的 Logo 为 nil。
+    public var logoLanguage: String? = nil
+
+    /// 需要在片名 Logo 下方补充的中文名。Logo 已是中文，或 TMDB 没有中文名时为 nil。
+    public var chineseNameBelowLogo: String? {
+        guard title.unicodeScalars.contains(where: { $0.properties.isIdeographic }) else { return nil }
+        if logoPath == nil { return title == originalTitle ? nil : title }
+        return logoLanguage == "zh" ? nil : title
+    }
 }
 
 public struct TMDBSearchHit: Hashable, Sendable {
@@ -196,6 +205,7 @@ extension TMDBTitle {
                 ? (lhs.voteAverage ?? 0) < (rhs.voteAverage ?? 0) : leftPixels < rightPixels
         }
         let backdrop = (recommended ?? highestResolution)?.filePath ?? raw.backdropPath
+        let logo = best("en") ?? best("zh") ?? best(nil) ?? logos.first
         self.init(
             ref: TMDBRef(type: type, id: raw.id),
             title: raw.title ?? raw.name ?? "",
@@ -212,7 +222,7 @@ extension TMDBTitle {
             posterPath: raw.posterPath,
             backdropPath: backdrop,
             highResolutionBackdropPath: highestResolution?.filePath ?? raw.backdropPath,
-            logoPath: (best("en") ?? best("zh") ?? best(nil) ?? logos.first)?.filePath,
+            logoPath: logo?.filePath,
             cast: (raw.credits?.cast ?? []).sorted { ($0.order ?? 999) < ($1.order ?? 999) }.prefix(12).map {
                 TMDBCast(id: $0.id, name: $0.name, character: $0.character, profilePath: $0.profilePath)
             },
@@ -222,6 +232,7 @@ extension TMDBTitle {
             },
             releaseDate: (raw.releaseDate ?? raw.firstAirDate).flatMap { $0.isEmpty ? nil : $0 },
             countries: raw.originCountry.flatMap { $0.isEmpty ? nil : $0 }
-                ?? (raw.productionCountries ?? []).map(\.iso31661))
+                ?? (raw.productionCountries ?? []).map(\.iso31661),
+            logoLanguage: logo?.iso6391)
     }
 }

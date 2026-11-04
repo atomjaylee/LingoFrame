@@ -63,6 +63,8 @@ private let officeJSON = """
     #expect(t.overview == "A mockumentary.")
     #expect(t.year == 2005)
     #expect(t.logoPath == "/en2.png")
+    #expect(t.logoLanguage == "en")
+    #expect(t.chineseNameBelowLogo == "办公室")
     #expect(t.highResolutionBackdropPath == "/b.jpg")
     #expect(t.cast.map(\.name) == ["Steve Carell", "Rainn Wilson"])
     #expect(t.seasons.map(\.number) == [1])
@@ -146,4 +148,21 @@ private let officeJSON = """
         try await TMDBClient(token: " ", config: config("deny.test"), session: session, cacheDirectory: nil)
             .details(TMDBRef(type: .movie, id: 1))
     }
+}
+
+@Test func chineseNameIsOnlyAddedWhenNotAlreadyShown() {
+    func title(_ name: String, original: String?, logo: String?, language: String?) -> TMDBTitle {
+        TMDBTitle(ref: TMDBRef(type: .movie, id: 1), title: name, originalTitle: original, genres: [], networks: [],
+                  logoPath: logo, cast: [], seasons: [], logoLanguage: language)
+    }
+    #expect(title("办公室", original: "The Office", logo: "/l.png", language: "en").chineseNameBelowLogo == "办公室")
+    #expect(title("办公室", original: "The Office", logo: "/l.png", language: nil).chineseNameBelowLogo == "办公室")
+    #expect(title("办公室", original: "The Office", logo: nil, language: nil).chineseNameBelowLogo == "办公室")
+    // Logo 已是中文，或没有 Logo 时原名就是中文，都不重复显示。
+    #expect(title("霸王别姬", original: "霸王别姬", logo: "/l.png", language: "zh").chineseNameBelowLogo == nil)
+    #expect(title("霸王别姬", original: "霸王别姬", logo: nil, language: nil).chineseNameBelowLogo == nil)
+    // 中文片配英文 Logo 时仍要补中文名。
+    #expect(title("霸王别姬", original: "霸王别姬", logo: "/l.png", language: "en").chineseNameBelowLogo == "霸王别姬")
+    // TMDB 没有中文译名。
+    #expect(title("The Office", original: "The Office", logo: "/l.png", language: "en").chineseNameBelowLogo == nil)
 }

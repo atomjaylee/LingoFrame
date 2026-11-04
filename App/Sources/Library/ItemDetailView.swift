@@ -100,6 +100,7 @@ struct ItemDetailView: View {
                     return background.scaleEffect(motionEnabled ? 1 + min(distance / 350, 1) * 0.05 : 1)
                 }
             HeroInfoPanel(title: info, fallbackTitle: emby?.displayName ?? "",
+                          chineseName: info?.chineseNameBelowLogo,
                           meta: HeroMeta.parts(info, isSeries: isSeries, fallbackYear: emby?.productionYear,
                                                fallbackRuntime: emby?.runtimeText,
                                                seasonCount: seasons.isEmpty ? nil : seasons.count),
