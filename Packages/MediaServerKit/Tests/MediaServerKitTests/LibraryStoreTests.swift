@@ -268,3 +268,9 @@ private func temporaryDirectory() -> URL {
     #expect(LibraryList.merge(cached: cached, cachedTotal: 6, fresh: ["x", "y"].map(item), freshTotal: 8).map(\.id) == ["x", "y"])
     #expect(LibraryList.merge(cached: cached, cachedTotal: 6, fresh: [], freshTotal: 0).isEmpty)
 }
+
+@Test func imageRequestsCarryTheServerToken() {
+    let headers = FakeServer(host: "image-token.test", ids: []).client.imageHTTPHeaders
+    #expect(headers["X-Emby-Token"] == "secret-token")
+    #expect(headers["X-Emby-Authorization"]?.contains(#"Token="secret-token""#) == true)
+}

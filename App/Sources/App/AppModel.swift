@@ -34,6 +34,7 @@ final class ServerConnection: Identifiable {
         client = EmbyClient(account: account, identity: identity)
         self.libraryStore = libraryStore
         libraries = libraryStore.cachedLibraries(serverID: Self.id(for: account))
+        ImagePipeline.shared.setHeaders(client.imageHTTPHeaders, forServer: account.serverURL)
     }
 
     /// 检查令牌、读取媒体库和片目。令牌失效时返回 false，由调用方决定是否移除账号。
@@ -278,6 +279,7 @@ final class AppModel {
     }
 
     func removeServer(_ id: String) {
+        if let server = server(id) { ImagePipeline.shared.setHeaders(nil, forServer: server.account.serverURL) }
         servers.removeAll { $0.id == id }
         persistAccounts()
         Task { await libraryStore.removeServer(id) }

@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import SwiftUI
+import Synchronization
 
 /// 解码后的位图。CGImage 本身是不可变的，可以安全地跨线程传递。
 public struct DecodedImage: @unchecked Sendable {
@@ -33,6 +34,47 @@ public struct ArtworkColor: Hashable, Sendable {
     }
 }
 
+/// 需要认证的图片服务器。认证头只发给登记过的地址（协议、主机、端口都相同），TMDB 等第三方图片拿不到。
+struct ImageAuthorization: Sendable {
+    private var headersByOrigin: [String: [String: String]] = [:]
+
+    static func origin(of url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(), let host = url.host()?.lowercased() else { return nil }
+        let port = url.port ?? (scheme == "https" ? 443 : 80)
+        return "\(scheme)://\(host):\(port)"
+    }
+
+    mutating func setHeaders(_ headers: [String: String]?, forServer url: URL) {
+        guard let origin = Self.origin(of: url) else { return }
+        headersByOrigin[origin] = headers
+    }
+
+    func headers(for url: URL) -> [String: String] {
+        Self.origin(of: url).flatMap { headersByOrigin[$0] } ?? [:]
+    }
+
+    /// 图片跳转到别的地址（比如对象存储）时去掉认证头，否则令牌会泄露给第三方。
+    static func redirect(_ request: URLRequest, from original: URL?, removing names: [String]) -> URLRequest {
+        guard let original, let target = request.url, origin(of: original) != origin(of: target) else { return request }
+        var request = request
+        for name in names { request.setValue(nil, forHTTPHeaderField: name) }
+        return request
+    }
+}
+
+private final class ImageRedirectGuard: NSObject, URLSessionTaskDelegate {
+    private let headerNames: [String]
+
+    init(headerNames: [String]) {
+        self.headerNames = headerNames
+    }
+
+    func urlSession(_: URLSession, task: URLSessionTask, willPerformHTTPRedirection _: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        ImageAuthorization.redirect(request, from: task.originalRequest?.url, removing: headerNames)
+    }
+}
+
 /// 图片加载管线：内存缓存 + URLCache 磁盘缓存 + ImageIO 按显示尺寸降采样解码。
 /// 海报墙一屏几十张图，降采样能把解码内存和 CPU 占用降一个数量级。
 public actor ImagePipeline {
@@ -42,6 +84,7 @@ public actor ImagePipeline {
     private nonisolated(unsafe) let memory = NSCache<NSString, CGImageBox>()
     private var colors: [URL: ArtworkColor] = [:]
     private var inFlight: [String: Task<DecodedImage, Error>] = [:]
+    private nonisolated let authorization = Mutex(ImageAuthorization())
 
     public init(diskCapacityMB: Int = 512) {
         let cacheURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -55,6 +98,11 @@ public actor ImagePipeline {
         memory.totalCostLimit = 128 << 20
     }
 
+    /// 登记服务器的认证头，传 nil 取消。有些服务器的图片接口也要求令牌。
+    public nonisolated func setHeaders(_ headers: [String: String]?, forServer url: URL) {
+        authorization.withLock { $0.setHeaders(headers, forServer: url) }
+    }
+
     /// 内存里已经解码好的图，可以在渲染时同步读取。NSCache 本身线程安全。
     public nonisolated func cachedImage(for url: URL, maxPixelSize: Int) -> DecodedImage? {
         let key = "\(url.absoluteString)#\(maxPixelSize)"
@@ -66,8 +114,12 @@ public actor ImagePipeline {
         if let cached = cachedImage(for: url, maxPixelSize: maxPixelSize) { return cached }
         if let task = inFlight[key] { return try await task.value }
 
-        let task = Task { [session] in
-            let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        let headers = authorization.withLock { $0.headers(for: url) }
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        let task = Task { [session, request] in
+            let redirectGuard = headers.isEmpty ? nil : ImageRedirectGuard(headerNames: Array(headers.keys))
+            let (data, response) = try await session.data(for: request, delegate: redirectGuard)
             guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
                 throw URLError(.badServerResponse)
             }

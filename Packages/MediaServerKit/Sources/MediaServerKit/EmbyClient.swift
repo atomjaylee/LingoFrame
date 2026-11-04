@@ -234,7 +234,13 @@ public struct EmbyClient: Sendable {
 
     // MARK: 图片
 
-    /// 图片地址。剧集单集没有横图时会回退到所属剧的背景图。图片接口不需要令牌。
+    /// 请求图片时的认证头。多数服务器的图片接口是公开的，但也有要求令牌的，统一带上。
+    public var imageHTTPHeaders: [String: String] {
+        guard let token = transport.token else { return [:] }
+        return ["X-Emby-Token": token, "X-Emby-Authorization": transport.identity.authorizationHeader(token: token)]
+    }
+
+    /// 图片地址。剧集单集没有横图时会回退到所属剧的背景图。
     public func imageURL(for item: EmbyItem, type: ImageType, maxWidth: Int) -> URL? {
         typealias Target = (id: String, tag: String, path: String)
         func target(_ id: String?, _ tag: String?, _ path: String) -> Target? {
