@@ -147,7 +147,7 @@ struct MainShell: View {
     }
 
     /// 开发版：启动参数 -debugRoute 直接打开某个页面，方便在没有界面操作的环境里截图检查。
-    /// 例如 -debugRoute detail:<条目ID>、tmdb:tv:2316、library、library:add、library:emby、settings、series[:序号]、movie[:序号]、play:<条目ID>。
+    /// 例如 -debugRoute detail:<条目ID>、tmdb:tv:2316、library、server、grid、library:add、library:emby、settings、series[:序号]、movie[:序号]、play:<条目ID>。
     private func openDebugRoute() async {
         #if DEBUG
         guard let route = UserDefaults.standard.string(forKey: "debugRoute") else { return }
@@ -156,6 +156,15 @@ struct MainShell: View {
         switch parts.first {
         case "library":
             select(.library)
+        case "server":
+            if let server { path.append(Route.server(server.id)) }
+        case "grid":
+            // 打开第一台服务器的第一个媒体库海报墙。
+            select(.library)
+            for _ in 0..<60 where server?.libraries.isEmpty ?? true { try? await Task.sleep(for: .seconds(1)) }
+            if let server, let library = server.libraries.first {
+                path.append(Route.library(serverID: server.id, library: library))
+            }
         case "settings":
             try? await Task.sleep(for: .seconds(1))
             openSettings()

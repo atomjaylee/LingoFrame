@@ -39,7 +39,7 @@ public actor ImagePipeline {
     public static let shared = ImagePipeline()
 
     private let session: URLSession
-    private let memory = NSCache<NSString, CGImageBox>()
+    private nonisolated(unsafe) let memory = NSCache<NSString, CGImageBox>()
     private var colors: [URL: ArtworkColor] = [:]
     private var inFlight: [String: Task<DecodedImage, Error>] = [:]
 
@@ -55,9 +55,15 @@ public actor ImagePipeline {
         memory.totalCostLimit = 128 << 20
     }
 
+    /// 内存里已经解码好的图，可以在渲染时同步读取。NSCache 本身线程安全。
+    public nonisolated func cachedImage(for url: URL, maxPixelSize: Int) -> DecodedImage? {
+        let key = "\(url.absoluteString)#\(maxPixelSize)"
+        return memory.object(forKey: key as NSString).map { DecodedImage(cgImage: $0.image) }
+    }
+
     public func image(for url: URL, maxPixelSize: Int) async throws -> DecodedImage {
         let key = "\(url.absoluteString)#\(maxPixelSize)"
-        if let cached = memory.object(forKey: key as NSString) { return DecodedImage(cgImage: cached.image) }
+        if let cached = cachedImage(for: url, maxPixelSize: maxPixelSize) { return cached }
         if let task = inFlight[key] { return try await task.value }
 
         let task = Task { [session] in
@@ -104,7 +110,7 @@ public actor ImagePipeline {
     }
 }
 
-private final class CGImageBox {
+private final class CGImageBox: @unchecked Sendable {
     let image: CGImage
     init(_ image: CGImage) { self.image = image }
 }
@@ -124,6 +130,8 @@ public struct RemoteImage: View {
         self.maxPixelSize = maxPixelSize
         self.contentMode = contentMode
         self.showsPlaceholder = showsPlaceholder
+        // 内存命中时第一帧就有图，返回列表时海报不会闪一下占位色。
+        _image = State(initialValue: url.flatMap { ImagePipeline.shared.cachedImage(for: $0, maxPixelSize: maxPixelSize) })
     }
 
     public var body: some View {
@@ -139,6 +147,10 @@ public struct RemoteImage: View {
         .clipped()
         .task(id: url) {
             guard let url else { image = nil; return }
+            if let cached = ImagePipeline.shared.cachedImage(for: url, maxPixelSize: maxPixelSize) {
+                image = cached
+                return
+            }
             image = nil
             let loaded = try? await ImagePipeline.shared.image(for: url, maxPixelSize: maxPixelSize)
             guard !Task.isCancelled else { return }

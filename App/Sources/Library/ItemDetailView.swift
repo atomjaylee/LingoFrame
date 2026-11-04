@@ -377,6 +377,8 @@ struct ItemDetailView: View {
         guard let client, let item = match?.item else { return }
         do {
             try await client.setPlayed(played, itemID: target.id)
+            // 片目列表有缓存，要告诉它们已看状态变了。
+            NotificationCenter.default.post(name: PlaybackSession.watchProgressDidChange, object: nil)
             if target.id == item.id { full = try? await client.item(item.id) } else { await loadEpisodes() }
         } catch {
             errorMessage = error.localizedDescription

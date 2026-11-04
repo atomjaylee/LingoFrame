@@ -14,6 +14,7 @@ import Workspace
 final class ServerConnection: Identifiable {
     let account: EmbyAccount
     let client: EmbyClient
+    @ObservationIgnored private let libraryStore: LibraryStore
     private(set) var state: StatusDot.State = .idle
     private(set) var libraries: [EmbyItem] = []
     private(set) var catalog: [EmbyItem] = []
@@ -28,9 +29,11 @@ final class ServerConnection: Identifiable {
     var movieCount: Int { catalog.filter { $0.kind == .movie }.count }
     var seriesCount: Int { catalog.filter { $0.kind == .series }.count }
 
-    init(account: EmbyAccount, identity: ClientIdentity) {
+    init(account: EmbyAccount, identity: ClientIdentity, libraryStore: LibraryStore) {
         self.account = account
         client = EmbyClient(account: account, identity: identity)
+        self.libraryStore = libraryStore
+        libraries = libraryStore.cachedLibraries(serverID: Self.id(for: account))
     }
 
     /// 检查令牌、读取媒体库和片目。令牌失效时返回 false，由调用方决定是否移除账号。
@@ -40,6 +43,11 @@ final class ServerConnection: Identifiable {
         do {
             try await client.validate()
             let views = try await client.views().filter { ["movies", "tvshows", "mixed", nil].contains($0.collectionType) }
+            // 片目可能要读很久，媒体库列表拿到就先更新，不让货架等它。
+            if views != libraries {
+                libraries = views
+                libraryStore.saveLibraries(views, serverID: id)
+            }
             var all: [EmbyItem] = []
             for lib in views { all += (try? await client.catalog(in: lib.id)) ?? [] }
             var index: [TMDBRef: EmbyItem] = [:]
@@ -50,7 +58,6 @@ final class ServerConnection: Identifiable {
                     if index[ref] == nil { index[ref] = item }
                 }
             }
-            libraries = views
             catalog = all
             catalogByTMDB = index
             state = .online
@@ -94,6 +101,7 @@ final class AppModel {
     let layoutStore: LayoutStore
     let panels = PanelRegistry()
     let recommendations = RecommendationStore()
+    let libraryStore = LibraryStore()
     /// 快捷键表：学习层的默认绑定 + 播放器专用绑定。以后用户自定义的绑定追加在最后。
     let bindings = Bindings.defaults.overlaid(with: PlayerCommands.extraBindings)
 
@@ -149,7 +157,7 @@ final class AppModel {
         }
 
         tmdbConfig = defaults.data(forKey: "tmdb.config").flatMap { try? JSONDecoder().decode(TMDBConfig.self, from: $0) } ?? .default
-        servers = accountStore.load().map { ServerConnection(account: $0, identity: identity) }
+        servers = accountStore.load().map { ServerConnection(account: $0, identity: identity, libraryStore: libraryStore) }
         rebuildTMDB()
 
         PlayerPanels.register(in: panels)
@@ -262,7 +270,7 @@ final class AppModel {
     }
 
     func addServer(_ account: EmbyAccount) async {
-        let connection = ServerConnection(account: account, identity: identity)
+        let connection = ServerConnection(account: account, identity: identity, libraryStore: libraryStore)
         servers.removeAll { $0.id == connection.id }
         servers.append(connection)
         persistAccounts()
@@ -272,6 +280,7 @@ final class AppModel {
     func removeServer(_ id: String) {
         servers.removeAll { $0.id == id }
         persistAccounts()
+        Task { await libraryStore.removeServer(id) }
     }
 
     private func persistAccounts() {

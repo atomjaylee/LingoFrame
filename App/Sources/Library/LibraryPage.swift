@@ -57,7 +57,10 @@ struct LibraryPage: View {
                                 }
                             }
                             .contextMenu {
-                                Button("刷新") { Task { await server.refresh() } }
+                                Button("刷新") {
+                                    model.libraryStore.markStale(serverID: server.id)
+                                    Task { await server.refresh() }
+                                }
                                 Divider()
                                 Button("删除资源库", role: .destructive) { pendingRemoval = server }
                             }
@@ -162,7 +165,6 @@ struct ServerLibrariesView: View {
         let server = model.server(serverID)
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                Text(server?.name ?? "资源库").font(.system(size: 26, weight: .bold))
                 if let server {
                     if server.libraries.isEmpty {
                         Text(server.state == .offline ? (server.errorMessage ?? "服务器无响应") : "正在读取媒体库…")
@@ -225,16 +227,20 @@ private struct LibraryShelf: View {
     let serverID: String
     let library: EmbyItem
     let client: EmbyClient
+    @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
 
-    @State private var items: [EmbyItem] = []
-    @State private var total: Int?
-    @State private var isLoading = false
-    @State private var errorMessage: String?
-
-    private let pageSize = 30
+    /// 和这个媒体库的海报墙默认排序相同，所以共享同一份数据。
+    private var list: LibraryList {
+        model.libraryStore.list(for: LibraryListKey(serverID: serverID, libraryID: library.id,
+                                                    sort: .dateAdded, descending: true),
+                                client: client)
+    }
 
     var body: some View {
+        let list = self.list
+        let items = list.items
+        let loadMoreTriggers = Set(items.suffix(10).map(\.id))
         VStack(alignment: .leading, spacing: 12) {
             NavigationLink(value: Route.library(serverID: serverID, library: library)) {
                 HStack(spacing: 7) {
@@ -249,11 +255,11 @@ private struct LibraryShelf: View {
             .buttonStyle(ClickablePlainButtonStyle())
 
             if items.isEmpty {
-                if isLoading {
+                if list.isLoadingFirstPage {
                     ProgressView()
                         .controlSize(.small)
                         .frame(height: 120)
-                } else if let errorMessage {
+                } else if let errorMessage = list.errorMessage {
                     Text(errorMessage)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -273,13 +279,13 @@ private struct LibraryShelf: View {
                                 .environment(\.embyClient, client)
                                 .environment(\.embyServerID, serverID)
                                 .onAppear {
-                                    if item.id == items.last?.id {
-                                        Task { await loadMore() }
+                                    if loadMoreTriggers.contains(item.id) {
+                                        Task { await list.loadMore() }
                                     }
                                 }
                         }
 
-                        if isLoading {
+                        if list.isLoadingMore {
                             ProgressView()
                                 .controlSize(.small)
                                 .frame(width: 40, height: theme.metrics.posterWidth * 1.5)
@@ -293,32 +299,8 @@ private struct LibraryShelf: View {
                 .padding(.horizontal, -theme.metrics.space(2))
             }
         }
-        .task(id: library.id) { await reload() }
-    }
-
-    private func reload() async {
-        items = []
-        total = nil
-        errorMessage = nil
-        await loadMore()
-    }
-
-    private func loadMore() async {
-        guard !isLoading, total.map({ items.count < $0 }) ?? true else { return }
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            let page = try await client.items(in: library.id, sort: .dateAdded, descending: true,
-                                              start: items.count, limit: pageSize)
-            guard !Task.isCancelled else { return }
-            let known = Set(items.map(\.id))
-            items += page.items.filter { !known.contains($0.id) }
-            total = page.totalRecordCount ?? items.count
-            errorMessage = nil
-        } catch is CancellationError {
-            return
-        } catch {
-            errorMessage = error.localizedDescription
+        .task(id: "\(library.id)-\(model.watchProgressRevision)") {
+            await list.revalidate(progressRevision: model.watchProgressRevision)
         }
     }
 }
