@@ -271,3 +271,18 @@ private typealias Response = StubProtocol.Response
     let item = try EmbyCoding.decoder.decode(EmbyItem.self, from: data)
     #expect(item.tmdbID == 2316)
 }
+
+@Test func streamExtensionUsesRealFormatOfStrmSources() throws {
+    func source(_ container: String?, _ path: String?) throws -> MediaSourceInfo {
+        var object: [String: String] = ["Id": "1"]
+        object["Container"] = container
+        object["Path"] = path
+        return try EmbyCoding.decoder.decode(MediaSourceInfo.self, from: JSONEncoder().encode(object))
+    }
+    #expect(EmbyClient.streamExtension(of: try source("strm", "http://172.17.0.1:9527/d/115/Movie.ISO")) == "iso")
+    #expect(EmbyClient.streamExtension(of: try source("strm", "http://172.17.0.1/a/m.iso?id=1&x=2.3")) == "iso")
+    #expect(EmbyClient.streamExtension(of: try source("strm", "http://172.17.0.1/?id=abc")) == "strm")
+    #expect(EmbyClient.streamExtension(of: try source("strm", nil)) == "strm")
+    #expect(EmbyClient.streamExtension(of: try source("MKV", "/data/a.mp4")) == "mkv")
+    #expect(EmbyClient.streamExtension(of: try source(nil, nil)) == nil)
+}

@@ -202,6 +202,46 @@ final class RemoteDiscSource: @unchecked Sendable {
     }
 }
 
+/// 详情页提前打开的 ISO，点播放时由引擎接管，只保留最近一部。
+final class DiscPrewarmStore: @unchecked Sendable {
+    static let shared = DiscPrewarmStore()
+
+    private struct Entry {
+        var url: URL
+        var source: RemoteDiscSource
+        var isReady: Bool
+    }
+
+    private let lock = NSLock()
+    private var entry: Entry?
+
+    func store(_ source: RemoteDiscSource, for url: URL) {
+        lock.lock()
+        let previous = entry?.source
+        entry = Entry(url: url, source: source, isReady: false)
+        lock.unlock()
+        previous?.release()
+    }
+
+    func markReady(_ source: RemoteDiscSource) {
+        lock.lock(); defer { lock.unlock() }
+        if entry?.source === source { entry?.isReady = true }
+    }
+
+    func isReady(_ url: URL) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return entry?.url == url && entry?.isReady == true
+    }
+
+    /// 取走数据源，调用方接手它的引用。
+    func take(_ url: URL) -> RemoteDiscSource? {
+        lock.lock(); defer { lock.unlock() }
+        guard entry?.url == url else { return nil }
+        defer { entry = nil }
+        return entry?.source
+    }
+}
+
 /// 给引擎用的读取游标。读取窗口的做法和引擎一致：零散读取用小窗口，连续读取逐步翻倍。
 final class DiscRangeReader: IOReader, @unchecked Sendable {
     static let baseWindow = RemoteDiscSource.blockSize
@@ -217,6 +257,20 @@ final class DiscRangeReader: IOReader, @unchecked Sendable {
     private let cancelLock = NSLock()
     private var cancelGeneration = 0
     private var activeTask: URLSessionTask?
+
+    /// 提前读好光盘结构和流信息，放进共享块缓存。预热失败不影响播放，点击后会重新打开。
+    static func prewarm(url: URL, headers: [String: String]) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            guard let source = try? RemoteDiscSource(url: url, headers: headers) else { return false }
+            source.retain()
+            DiscPrewarmStore.shared.store(source, for: url)
+            let reader = DiscRangeReader(source: source)
+            defer { reader.close() }
+            guard (try? AetherEngine.probe(source: .custom(reader))) != nil else { return false }
+            DiscPrewarmStore.shared.markReady(source)
+            return true
+        }.value
+    }
 
     /// 只有地址看起来是光盘镜像时才走这条路。
     static func handles(_ url: URL) -> Bool {

@@ -148,6 +148,23 @@ struct DiscRangeReaderTests {
         #expect(throws: DiscRangeError.self) { _ = try makeReader() }
     }
 
+    @Test func prewarmStoreHandsSourceOverOnce() throws {
+        StubProtocol.reset()
+        let config = RemoteDiscSource.defaultConfiguration()
+        config.protocolClasses = [StubProtocol.self]
+        let source = try RemoteDiscSource(url: originURL, headers: [:], configuration: config)
+        let store = DiscPrewarmStore()
+        store.store(source, for: originURL)
+        #expect(!store.isReady(originURL))
+        store.markReady(source)
+        #expect(store.isReady(originURL))
+        #expect(store.take(edgeURL) == nil)
+        let taken = try #require(store.take(originURL))
+        #expect(store.take(originURL) == nil)
+        #expect(!store.isReady(originURL))
+        DiscRangeReader(source: taken).close()
+    }
+
     @Test func parsesContentRange() {
         #expect(RemoteDiscSource.totalSize(fromContentRange: "bytes 0-0/65068924928") == 65_068_924_928)
         #expect(RemoteDiscSource.totalSize(fromContentRange: "bytes 0-0/*") == nil)

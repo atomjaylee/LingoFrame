@@ -190,6 +190,7 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
         guard !source.url.isFileURL, DiscRangeReader.handles(source.url) else { return nil }
         let url = source.url
         let headers = source.httpHeaders
+        if let warmed = DiscPrewarmStore.shared.take(url) { return DiscRangeReader(source: warmed) }
         return await Task.detached(priority: .userInitiated) {
             guard let disc = try? RemoteDiscSource(url: url, headers: headers) else { return nil }
             return DiscRangeReader(source: disc)
@@ -221,14 +222,15 @@ public final class NativePlayerEngine: PlaybackCore.PlaybackEngine, SegmentPlaye
 
     @discardableResult
     public nonisolated static func prewarm(url: URL, httpHeaders: [String: String] = [:], bitrate: Int? = nil) async -> Bool {
-        // ISO 不走引擎的地址读取，预热结果用不上。
-        guard !DiscRangeReader.handles(url) else { return false }
+        if DiscRangeReader.handles(url) { return await DiscRangeReader.prewarm(url: url, headers: httpHeaders) }
         _ = await AetherEngine.prewarm(url: url, httpHeaders: httpHeaders,
                                        byteBudget: prewarmByteBudget(bitrate: bitrate))
         return AetherEngine.isPrewarmed(url: url)
     }
 
-    public nonisolated static func isPrewarmed(url: URL) -> Bool { AetherEngine.isPrewarmed(url: url) }
+    public nonisolated static func isPrewarmed(url: URL) -> Bool {
+        DiscRangeReader.handles(url) ? DiscPrewarmStore.shared.isReady(url) : AetherEngine.isPrewarmed(url: url)
+    }
 
     public func play() { backend.play() }
     public func pause() { backend.pause() }

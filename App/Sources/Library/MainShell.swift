@@ -194,8 +194,16 @@ struct MainShell: View {
                     }
                     return false
                 }
+                // isotest:片名:warm 模拟进详情页预热后再点播放。
+                var prepared: PreparedPlayback?
+                if parts.count > 2, parts[2] == "warm" {
+                    await model.preparePlayback(serverID: server.id, itemID: match.id)
+                    try? await Task.sleep(for: .seconds(6))
+                    prepared = model.takePreparedPlayback(serverID: server.id, itemID: match.id, resume: false)
+                    NSLog("原盘 预热 %@", prepared?.isPrewarmed == true ? "命中" : "未完成")
+                }
                 var started = ContinuousClock.now
-                await session.play(itemID: match.id, resume: false)
+                await session.start(.emby(serverID: server.id, itemID: match.id, resume: false), prepared: prepared)
                 var ok = await waitPlaying(from: nil)
                 NSLog("原盘 起播 %@ %@ 时长 %.0f 音轨 %d", ok ? "成功" : "失败", "\(started.duration(to: .now))",
                       engine.duration, engine.audioOptions.count)

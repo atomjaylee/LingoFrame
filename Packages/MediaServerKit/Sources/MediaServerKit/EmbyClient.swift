@@ -319,13 +319,23 @@ public struct EmbyClient: Sendable {
                               playSessionID: info.playSessionId)
     }
 
+    /// 播放地址的扩展名。strm 片源的容器是 strm，真实格式要看它指向的路径，比如 xxx.iso。
+    static func streamExtension(of source: MediaSourceInfo) -> String? {
+        let container = source.container?.lowercased()
+        guard container == nil || container == "strm", let path = source.path else { return container }
+        let name = path.split(separator: "?").first.map(String.init) ?? path
+        guard let dot = name.lastIndex(of: "."), dot > name.startIndex else { return container }
+        let ext = name[name.index(after: dot)...].lowercased()
+        return (1...5).contains(ext.count) && ext.allSatisfy { $0.isLetter || $0.isNumber } ? ext : container
+    }
+
     /// 原文件直放地址。客户端自己处理容器和解码，不依赖 Emby 的转码或转封装权限。
     public func resolveOriginalStream(itemID: String, info: PlaybackInfoResponse,
                                       mediaSourceID: String? = nil) throws -> ResolvedStream {
         guard let source = info.mediaSources.first(where: { $0.id == mediaSourceID }) ?? info.mediaSources.first else {
             throw EmbyError.noPlayableSource
         }
-        let ext = source.container.map { ".\($0.lowercased())" } ?? ""
+        let ext = Self.streamExtension(of: source).map { ".\($0)" } ?? ""
         let url = transport.url("Videos/\(itemID)/stream\(ext)", [
             "Static": "true", "MediaSourceId": source.id, "api_key": account.accessToken,
             "UserId": account.userID, "DeviceId": transport.identity.deviceID, "PlaySessionId": info.playSessionId,
