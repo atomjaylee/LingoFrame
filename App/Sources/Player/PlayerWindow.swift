@@ -260,6 +260,11 @@ private struct PlayerScreen: View {
                 .frame(maxHeight: .infinity, alignment: .bottom)
                 .opacity(controlsVisible ? 1 : 0)
                 .allowsHitTesting(false)
+            LinearGradient(colors: [.black.opacity(0.55), .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: 96)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .opacity(controlsVisible ? 1 : 0)
+                .allowsHitTesting(false)
             PlaybackSubtitleOverlay(engine: session.engine)
                 .padding(.horizontal, 64)
                 .frame(maxHeight: .infinity, alignment: .bottom)
@@ -269,6 +274,15 @@ private struct PlayerScreen: View {
                     CloseButton(window: window)
                         .onHover { overControls = $0 }
                     Spacer()
+                }
+                .overlay {
+                    Text(session.windowTitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .shadow(color: .black.opacity(0.5), radius: 4, y: 1)
+                        .padding(.horizontal, 56)
+                        .allowsHitTesting(false)
                 }
                 .padding(10)
                 .opacity(controlsVisible ? 1 : 0)
