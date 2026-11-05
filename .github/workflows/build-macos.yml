@@ -41,6 +41,17 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Set automatic version
+        run: |
+          set -euo pipefail
+          BASE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' App/Info.plist)"
+          bash .github/scripts/version.sh "$BASE_VERSION" > build-version.env
+          cat build-version.env >> "$GITHUB_ENV"
+          source build-version.env
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" App/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_VERSION" App/Info.plist
+          echo "Pixon $APP_VERSION (build $BUILD_VERSION)"
+
       - name: Build Release app
         run: |
           set -euo pipefail
@@ -60,6 +71,8 @@ jobs:
 
           APP_PATH="build/DerivedData/Build/Products/Release/Pixon.app"
           test -d "$APP_PATH"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")" = "$APP_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Contents/Info.plist")" = "$BUILD_VERSION"
           file "$APP_PATH/Contents/MacOS/Pixon"
           lipo -info "$APP_PATH/Contents/MacOS/Pixon"
 
@@ -69,7 +82,7 @@ jobs:
 
           APP_PATH="build/DerivedData/Build/Products/Release/Pixon.app"
           STAGING_DIR="build/dmg-staging"
-          OUTPUT_PATH="build/Pixon-unsigned.dmg"
+          OUTPUT_PATH="build/$DMG_NAME"
 
           mkdir -p "$STAGING_DIR"
           ditto "$APP_PATH" "$STAGING_DIR/Pixon.app"
@@ -85,8 +98,8 @@ jobs:
       - name: Upload DMG
         uses: actions/upload-artifact@v7
         with:
-          name: Pixon-macOS-unsigned
-          path: build/Pixon-unsigned.dmg
+          name: Pixon-${{ env.APP_VERSION }}-build-${{ env.BUILD_VERSION }}-unsigned
+          path: build/${{ env.DMG_NAME }}
           if-no-files-found: error
           retention-days: 14
 
@@ -97,19 +110,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            RELEASE_TAG="$GITHUB_REF_NAME"
-          else
-            RELEASE_TAG="test-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          fi
-
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" build/Pixon-unsigned.dmg --clobber
+            gh release upload "$RELEASE_TAG" "build/$DMG_NAME" --clobber
           else
-            gh release create "$RELEASE_TAG" build/Pixon-unsigned.dmg \
+            gh release create "$RELEASE_TAG" "build/$DMG_NAME" \
               --target "$GITHUB_SHA" \
-              --title "Pixon $RELEASE_TAG (macOS test build)" \
-              --notes "Download Pixon-unsigned.dmg below. Universal app for Apple Silicon and Intel; requires macOS 15 or later. This test build has no Developer ID signature or Apple notarization. Source commit: $GITHUB_SHA." \
+              --title "Pixon $APP_VERSION (test build $BUILD_VERSION)" \
+              --notes "Download $DMG_NAME below. App version: $APP_VERSION; build: $BUILD_VERSION. Universal app for Apple Silicon and Intel; requires macOS 15 or later. This test build has no Developer ID signature or Apple notarization. Source commit: $GITHUB_SHA." \
               --prerelease \
               --latest=false
           fi
