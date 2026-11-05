@@ -1,0 +1,91 @@
+name: Build unsigned Pixon app
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build DMG
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Select Xcode 26
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          XCODE_APP="$({ find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' -print || true; } | head -n 1)"
+          if [[ -z "$XCODE_APP" ]]; then
+            echo "Xcode 26 is not installed on this runner." >&2
+            exit 1
+          fi
+
+          echo "DEVELOPER_DIR=$XCODE_APP/Contents/Developer" >> "$GITHUB_ENV"
+          "$XCODE_APP/Contents/Developer/usr/bin/xcodebuild" -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build Release app
+        run: |
+          set -euo pipefail
+
+          xcodebuild \
+            -project ELEnglish.xcodeproj \
+            -scheme ELEnglish \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Verify app architecture
+        run: |
+          set -euo pipefail
+
+          APP_PATH="build/DerivedData/Build/Products/Release/Pixon.app"
+          test -d "$APP_PATH"
+          file "$APP_PATH/Contents/MacOS/Pixon"
+          lipo -info "$APP_PATH/Contents/MacOS/Pixon"
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+
+          APP_PATH="build/DerivedData/Build/Products/Release/Pixon.app"
+          STAGING_DIR="build/dmg-staging"
+          OUTPUT_PATH="build/Pixon-unsigned.dmg"
+
+          mkdir -p "$STAGING_DIR"
+          ditto "$APP_PATH" "$STAGING_DIR/Pixon.app"
+          ln -s /Applications "$STAGING_DIR/Applications"
+          hdiutil create \
+            -volname Pixon \
+            -srcfolder "$STAGING_DIR" \
+            -format UDZO \
+            -ov \
+            "$OUTPUT_PATH"
+          hdiutil verify "$OUTPUT_PATH"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v7
+        with:
+          name: Pixon-macOS-unsigned
+          path: build/Pixon-unsigned.dmg
+          if-no-files-found: error
+          retention-days: 14
