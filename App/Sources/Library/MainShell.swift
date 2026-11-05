@@ -43,7 +43,7 @@ struct MainShell: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var section: ShellSection = .home
-    @State private var path = NavigationPath()
+    @State private var path: [Route] = []
     @State private var window: NSWindow?
     @State private var viewport = CGSize(width: 1440, height: 900)
     @AppStorage("sidebar.collapsed") private var collapsed = false
@@ -58,7 +58,7 @@ struct MainShell: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            NavigationStack(path: $path) {
+            NavigationStack(path: pushOnce) {
                 content
                     .navigationDestination(for: Route.self) { route in
                         destination(route).toolbar(.hidden, for: .windowToolbar)
@@ -121,7 +121,14 @@ struct MainShell: View {
     /// 切到某个分区并回到它的根页面；已在这个分区的子页面时，再点一次也要回到根页面。
     private func select(_ newSection: ShellSection) {
         section = newSection
-        path = NavigationPath()
+        path = []
+    }
+
+    /// 连点卡片时系统会把同一页压入多次，用户要按好几次返回。相邻的相同页面只留一个。
+    private var pushOnce: Binding<[Route]> {
+        Binding(get: { path }, set: { new in
+            path = new.enumerated().filter { $0.offset == 0 || new[$0.offset - 1] != $0.element }.map(\.element)
+        })
     }
 
     @ViewBuilder private var content: some View {

@@ -69,7 +69,7 @@ final class PlaybackSession {
     /// 没有可用字幕时的说明，比如「这个片源只有图形字幕」。
     private(set) var subtitleNote: String?
     private(set) var translationNote: String?
-    var subtitleMode: SubtitleMode = .primaryOnly {
+    var subtitleMode: SubtitleMode = .bilingual {
         didSet {
             if subtitleMode != .bilingual { translationNote = nil }
             if oldValue != subtitleMode { updateLearningActivity() }
@@ -393,7 +393,7 @@ final class PlaybackSession {
         primarySubtitle = primary?.isText == true ? primary : nil
         bitmapLearningSubtitle = primary?.isText == false ? primary : nil
         secondarySubtitle = nil
-        subtitleMode = .primaryOnly
+        subtitleMode = .bilingual
         updateLearningActivity()
     }
 
@@ -649,6 +649,8 @@ final class PlaybackSession {
                         continue
                     }
                     self.loopPass = 1
+                    // 句间空档里 currentLine 会保留上一句，不清掉的话下一拍又从第 1 遍开始循环。
+                    self.currentLine = nil
                 }
                 if !self.loopEnabled, self.pauseAfterSentence, let line = self.currentLine,
                    self.primaryCues.indices.contains(line), self.pausedAfterLine != line,

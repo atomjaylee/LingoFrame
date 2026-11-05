@@ -61,7 +61,7 @@ private struct TranscriptFloatingPanel: View {
         panel.backgroundColor = NSColor(white: 0.075, alpha: 1)
         panel.hasShadow = true
         panel.isMovableByWindowBackground = false
-        panel.contentMinSize = NSSize(width: 380, height: 660)
+        panel.contentMinSize = NSSize(width: 320, height: 660)
 
         guard !positioned,
               let player = PlayerWindowController.shared.window
@@ -74,7 +74,7 @@ private struct TranscriptFloatingPanel: View {
             return PlayerCommands.perform(command, session: session,
                                           window: command == PlayerCommands.closeWindow ? panel : player)
         }
-        panel.setContentSize(NSSize(width: 480, height: min(720, visible.height)))
+        panel.setContentSize(NSSize(width: 340, height: min(720, visible.height)))
         let gap: Double = 8
         let panelY = min(player.frame.maxY - panel.frame.height, visible.maxY - panel.frame.height)
         let rightX = player.frame.maxX + gap

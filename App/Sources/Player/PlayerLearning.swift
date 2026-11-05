@@ -7,7 +7,7 @@ import PlaybackKit
 import SwiftUI
 import Translation
 
-// 视频保留原字幕；双语、查词和跟读功能由独立学习面板提供。
+// 视频保留原字幕；双语、查词和逐句精听由独立学习面板提供。
 
 // MARK: - 字幕层
 
@@ -69,23 +69,31 @@ struct BitmapSubtitleOverlay: View {
 
 private struct SubtitleWord: View {
     let word: String
-    let isSelected: Bool
+    let color: Color
+    @Binding var lookup: WordLookup?
+    let identity: WordLookup
     let action: () -> Void
     @State private var isHovered = false
 
+    private var isSelected: Bool { lookup == identity }
+
     var body: some View {
         Text(word)
-            .foregroundStyle(isSelected ? .black : .white)
-            .padding(.horizontal, isSelected ? 8 : 1)
+            .foregroundStyle(isSelected ? .black : color)
+            .padding(.horizontal, 1)
             .background {
-                if isSelected { RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white) }
-                else if isHovered { RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(0.18)) }
+                if isSelected { RoundedRectangle(cornerRadius: 4, style: .continuous).fill(.white) }
+                else if isHovered { RoundedRectangle(cornerRadius: 4, style: .continuous).fill(.white.opacity(0.18)) }
             }
             .contentShape(Rectangle())
             .onHover { isHovered = $0 }
             .hoverTransition(value: isHovered)
             .onTapGesture(perform: action)
             .clickablePointer()
+            .popover(isPresented: Binding(get: { isSelected }, set: { if !$0 { lookup = nil } })) {
+                LookupCard(lookup: identity) { lookup = nil }
+                    .environment(\.colorScheme, .dark)
+            }
     }
 }
 
@@ -141,7 +149,8 @@ struct FlowLayout: Layout {
 struct WordLookup: Equatable {
     let word: String
     let sentence: String
-    var index: Int? = nil
+    let line: Int
+    let index: Int
 }
 
 /// 查词卡片：单词、朗读、系统词典里的释义，以及这句原文。
@@ -203,7 +212,7 @@ struct LookupCard: View {
 
 // MARK: - 学习面板
 
-/// 字幕学习窗口：前后文跟随播放，当前句单独精听，常用操作固定在底部。
+/// 字幕学习窗口：布局对应设计稿 Player 画板的字幕栏，字幕列表跟随播放，常用操作固定在底部。
 struct LearningPanel: View {
     @Bindable var session: PlaybackSession
     let hide: () -> Void
@@ -215,32 +224,21 @@ struct LearningPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            toolbar
             if session.subtitleMode == .bilingual, let note = session.translationNote {
                 Text(note)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, 14)
                     .padding(.bottom, 8)
             }
             if session.subtitleMode == .off {
                 ContentUnavailableView("学习字幕已隐藏", systemImage: "captions.bubble")
                     .frame(maxWidth: .infinity, minHeight: 270, maxHeight: .infinity)
             } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("前后文")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 18)
-                    TranscriptList(session: session, currentLine: currentLine)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(minHeight: 270, maxHeight: .infinity)
-            }
-
-            if session.subtitleMode != .off, let currentLine, session.primaryCues.indices.contains(currentLine) {
-                CurrentSentence(session: session, line: currentLine, cue: session.primaryCues[currentLine])
+                TranscriptList(session: session, currentLine: currentLine)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minHeight: 270, maxHeight: .infinity)
             }
             StudyControls(session: session)
         }
@@ -254,14 +252,14 @@ struct LearningPanel: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 10) {
-                Text("字幕与学习").font(.system(size: 16, weight: .semibold))
+        HStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Text("字幕").font(.system(size: 15, weight: .semibold))
                 if let currentLine {
-                    Text("\(currentLine + 1) / \(session.primaryCues.count)")
+                    Text("第 \(currentLine + 1) 句 / 共 \(session.primaryCues.count) 句")
                         .font(.system(size: 12, weight: .medium))
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white.opacity(0.45))
                 }
                 Spacer(minLength: 8)
             }
@@ -269,6 +267,7 @@ struct LearningPanel: View {
             .contentShape(Rectangle())
             .gesture(WindowDragGesture())
             .allowsWindowActivationEvents()
+            subtitleMenu
             Button(action: hide) {
                 Image(systemName: "xmark")
                     .font(.system(size: 13, weight: .medium))
@@ -279,56 +278,43 @@ struct LearningPanel: View {
             .foregroundStyle(.secondary)
             .accessibilityLabel("关闭面板")
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.08)).frame(height: 1) }
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
     }
 
-    private var toolbar: some View {
-        HStack(spacing: 12) {
-            Picker("学习字幕", selection: $session.subtitleMode) {
-                Text("英文").tag(SubtitleMode.primaryOnly)
-                Text("双语").tag(SubtitleMode.bilingual)
-                Text("遮挡").tag(SubtitleMode.blurPrimary)
-                Text("隐藏").tag(SubtitleMode.off)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .help("只切换学习窗口的字幕显示方式，不影响视频字幕")
-            Menu {
-                Menu("主字幕") {
-                    ForEach(session.subtitleOptions) { option in
-                        Button { session.selectPrimarySubtitle(option) } label: {
-                            if option == session.learningPrimarySubtitle { Label(option.title, systemImage: "checkmark") }
-                            else { Text(option.title) }
-                        }
+    private var subtitleMenu: some View {
+        Menu {
+            Menu("主字幕") {
+                ForEach(session.subtitleOptions) { option in
+                    Button { session.selectPrimarySubtitle(option) } label: {
+                        if option == session.learningPrimarySubtitle { Label(option.title, systemImage: "checkmark") }
+                        else { Text(option.title) }
                     }
                 }
-                Menu("副字幕") {
-                    Button { session.selectSecondarySubtitle(nil) } label: {
-                        if session.secondarySubtitle == nil { Label("无", systemImage: "checkmark") }
-                        else { Text("无") }
-                    }
-                    Divider()
-                    ForEach(session.subtitleOptions) { option in
-                        Button { session.selectSecondarySubtitle(option) } label: {
-                            if option == session.secondarySubtitle { Label(option.title, systemImage: "checkmark") }
-                            else { Text(option.title) }
-                        }
+            }
+            Menu("副字幕") {
+                Button { session.selectSecondarySubtitle(nil) } label: {
+                    if session.secondarySubtitle == nil { Label("无", systemImage: "checkmark") }
+                    else { Text("无") }
+                }
+                Divider()
+                ForEach(session.subtitleOptions) { option in
+                    Button { session.selectSecondarySubtitle(option) } label: {
+                        if option == session.secondarySubtitle { Label(option.title, systemImage: "checkmark") }
+                        else { Text(option.title) }
                     }
                 }
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 16))
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
             }
-            .menuStyle(.button).buttonStyle(.plain).clickablePointer().menuIndicator(.hidden)
-            .accessibilityLabel("字幕设置")
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 14))
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
         }
-        .font(.system(size: 12, weight: .medium))
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .menuStyle(.button).buttonStyle(.plain).clickablePointer().menuIndicator(.hidden)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("字幕设置")
     }
 }
 
@@ -354,118 +340,54 @@ struct SubtitleTranslation: ViewModifier {
     }
 }
 
-/// 当前句保留大字，译文开关与时间同行，避免挤占前后文和复听按钮。
-private struct CurrentSentence: View {
-    let session: PlaybackSession
-    let line: Int
-    let cue: SubtitleCue
-    @State private var translationOverride: Bool?
-    @State private var lookup: WordLookup?
-    @State private var showsLookup = false
-    @State private var resumeAfterLookup = false
-
-    private var translation: String? {
-        session.translation(for: cue)
-    }
-    private var showsTranslation: Bool { translationOverride ?? (session.subtitleMode == .bilingual) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Text("当前句").font(.system(size: 13, weight: .medium))
-                Text(TimeFormat.clock(cue.range.start.seconds))
-                    .font(.system(size: 12, weight: .medium)).monospacedDigit()
-                Spacer(minLength: 8)
-                Button { translationOverride = !showsTranslation } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: showsTranslation && translation != nil ? "eye.slash" : "eye")
-                        Text(showsTranslation && translation != nil ? "隐藏中文" : "显示中文")
-                        Text("T").foregroundStyle(.secondary)
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .padding(.horizontal, 8)
-                    .frame(height: 26)
-                    .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
-                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.white.opacity(0.1)))
-                }
-                .buttonStyle(.plain).clickablePointer()
-                .keyboardShortcut("t", modifiers: [])
-                .disabled(translation == nil)
-                .help(translation == nil ? "切到双语后自动加载或生成中文" : "只显示或隐藏当前句的中文")
-            }
-            .foregroundStyle(.secondary)
-
-            ScrollView {
-                FlowLayout(spacing: 6, lineSpacing: 4, alignment: .leading) {
-                    ForEach(Array(SubtitleText.words(cue.text).enumerated()), id: \.offset) { index, word in
-                        let bare = SubtitleText.bare(word)
-                        SubtitleWord(word: word, isSelected: lookup?.index == index && lookup?.word == bare) {
-                            guard !bare.isEmpty else { return }
-                            resumeAfterLookup = session.engine.state == .playing
-                            session.engine.pause()
-                            lookup = WordLookup(word: bare, sentence: cue.text, index: index)
-                            showsLookup = true
-                        }
-                    }
-                }
-                .font(.system(size: 27, weight: .bold))
-                .blur(radius: session.subtitleMode == .blurPrimary ? 7 : 0)
-                .allowsHitTesting(session.subtitleMode != .blurPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if showsTranslation, let translation {
-                    Text(translation.replacingOccurrences(of: "\n", with: " "))
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 8)
-                }
-            }
-            .scrollIndicators(.never)
-            .frame(height: showsTranslation && translation != nil ? 112 : 78)
-            .popover(isPresented: $showsLookup) {
-                if let lookup {
-                    LookupCard(lookup: lookup) { showsLookup = false }
-                        .environment(\.colorScheme, .dark)
-                }
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.top, 14)
-        .padding(.bottom, 8)
-        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.1)).frame(height: 1).padding(.horizontal, 18) }
-        .onChange(of: line) { _, _ in translationOverride = nil }
-        .onChange(of: session.subtitleMode) { _, _ in translationOverride = nil }
-        .onChange(of: showsLookup) { _, shown in
-            if !shown {
-                lookup = nil
-                if resumeAfterLookup { session.engine.play() }
-            }
-        }
-    }
-}
-
-/// 复听、逐句跳转和播放设置保持紧凑，给字幕阅读留出空间。
+/// 逐句跳转和学习设置固定在面板底部，给字幕阅读留出空间。
 private struct StudyControls: View {
     @Bindable var session: PlaybackSession
 
+    private static let segmentWidth: Double = 190
+
     var body: some View {
         let hasLines = !session.primaryCues.isEmpty
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(spacing: 8) {
-                step("backward.end.fill", "上一句", prominent: false) { session.previousSentence() }
-                step("arrow.counterclockwise", "重播本句", prominent: true) { session.replaySentence() }
-                step("forward.end.fill", "下一句", prominent: false) { session.nextSentence() }
-            }
-            .disabled(!hasLines)
-            Rectangle().fill(.white.opacity(0.1)).frame(height: 1).padding(.vertical, 2)
-            row("循环次数") {
-                Picker("循环次数", selection: $session.loopMode) {
-                    ForEach(LoopMode.allCases) { mode in
-                        Text(mode == .forever ? "∞" : mode.rawValue).tag(mode)
-                    }
+        VStack(alignment: .leading, spacing: 9) {
+            GeometryReader { geometry in
+                // 三个按钮按 1 : 1.3 : 1 分配，重播本句最宽。
+                let unit = (geometry.size.width - 12) / 3.3
+                HStack(spacing: 6) {
+                    step("backward.end.fill", "上一句", prominent: false) { session.previousSentence() }
+                        .frame(width: unit)
+                    step("arrow.counterclockwise", "重播本句", prominent: true) { session.replaySentence() }
+                        .frame(width: unit * 1.3)
+                    step("forward.end.fill", "下一句", prominent: false) { session.nextSentence() }
+                        .frame(width: unit)
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 230)
+            }
+            .frame(height: 38)
+            .disabled(!hasLines)
+            row("单句循环") {
+                Picker("单句循环", selection: $session.loopMode) {
+                    ForEach(LoopMode.allCases) { mode in Text(mode.rawValue).tag(mode) }
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                .frame(width: Self.segmentWidth)
                 .disabled(!hasLines)
+            }
+            row("每句后暂停") {
+                Toggle("每句后暂停", isOn: $session.pauseAfterSentence)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .tint(Color(red: 1, green: 0.68, blue: 0.03))
+                    .disabled(!hasLines || session.loopEnabled)
+                    .help(session.loopEnabled ? "循环时自动接续" : "听完这一句，再继续")
+            }
+            row("字幕显示") {
+                Picker("字幕显示", selection: $session.subtitleMode) {
+                    Text("双语").tag(SubtitleMode.bilingual)
+                    Text("英文").tag(SubtitleMode.primaryOnly)
+                    Text("遮挡").tag(SubtitleMode.blurPrimary)
+                    Text("隐藏").tag(SubtitleMode.off)
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                .frame(width: Self.segmentWidth)
+                .help("只切换学习窗口的字幕显示方式，不影响视频字幕")
             }
             row("播放速度") {
                 Menu {
@@ -481,19 +403,12 @@ private struct StudyControls: View {
                 }
                 .menuStyle(.borderlessButton).fixedSize().clickablePointer()
             }
-            row("句末暂停") {
-                Toggle("句末暂停", isOn: $session.pauseAfterSentence)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    .tint(Color(red: 1, green: 0.68, blue: 0.03))
-                    .disabled(!hasLines || session.loopEnabled)
-                Text(session.loopEnabled ? "循环时自动接续" : "听完这一句，再继续")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
         }
         .font(.system(size: 12, weight: .medium))
-        .padding(.horizontal, 18)
-        .padding(.top, 8)
-        .padding(.bottom, 16)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.08)).frame(height: 1) }
     }
 
     private func step(_ icon: String, _ title: String, prominent: Bool, action: @escaping () -> Void) -> some View {
@@ -502,13 +417,10 @@ private struct StudyControls: View {
                 Image(systemName: icon).font(.system(size: 12, weight: .semibold))
                 Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1).fixedSize()
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 32)
-            .foregroundStyle(prominent ? Color.black : .white)
-            .background(prominent ? Color.white : .white.opacity(0.07),
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .foregroundStyle(.white)
+            .background(.white.opacity(prominent ? 0.18 : 0.08),
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(.white.opacity(0.1), lineWidth: 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain).clickablePointer()
@@ -517,7 +429,7 @@ private struct StudyControls: View {
 
     private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: 10) {
-            Text(title).foregroundStyle(.secondary)
+            Text(title).foregroundStyle(.white.opacity(0.75))
             Spacer(minLength: 8)
             content()
         }
@@ -528,6 +440,8 @@ private struct StudyControls: View {
 private struct TranscriptList: View {
     let session: PlaybackSession
     let currentLine: Int?
+    @State private var lookup: WordLookup?
+    @State private var resumeAfterLookup = false
 
     var body: some View {
         if session.primaryCues.isEmpty {
@@ -550,16 +464,14 @@ private struct TranscriptList: View {
                 .frame(maxHeight: .infinity)
         } else {
             GeometryReader { geometry in
-                let rowHeight = max(36, (geometry.size.height - 8) / 7)
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(session.primaryCues.enumerated()), id: \.offset) { i, cue in
-                                row(i, cue).frame(height: rowHeight).id(i)
+                                row(i, cue).id(i)
                             }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, 6)
                     }
                     .scrollIndicators(.never)
                     .onChange(of: currentLine, initial: true) { _, line in
@@ -571,34 +483,63 @@ private struct TranscriptList: View {
                     }
                 }
             }
+            .onChange(of: lookup) { old, new in
+                if old != nil, new == nil, resumeAfterLookup { session.engine.play() }
+            }
         }
     }
 
+    /// 一行：时间 + 英文，双语时译文排在英文下面；行高随内容，整句都显示。
     private func row(_ i: Int, _ cue: SubtitleCue) -> some View {
         let isCurrent = i == currentLine
+        let isPast = currentLine.map { i < $0 } ?? false
         let amber = Color(red: 1, green: 0.68, blue: 0.03)
-        return Button { session.jump(toLine: i) } label: {
-            HStack(alignment: .center, spacing: 12) {
-                Text(TimeFormat.clock(cue.range.start.seconds))
-                    .font(.system(size: 11, weight: .medium)).monospacedDigit()
-                    .foregroundStyle(isCurrent ? amber : Color.secondary)
-                    .frame(width: 43, alignment: .leading)
-                Text(cue.text.replacingOccurrences(of: "\n", with: " "))
-                    .font(.system(size: 14, weight: isCurrent ? .semibold : .regular))
-                    .blur(radius: session.subtitleMode == .blurPrimary ? 5 : 0)
-                    .foregroundStyle(isCurrent ? Color.white : .white.opacity(0.64))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        let color = Color.white.opacity(isPast ? 0.5 : 1)
+        // 单词是流式排版，没有可靠的首行基线，时间改用顶对齐再微调。
+        return HStack(alignment: .top, spacing: 6) {
+            Text(TimeFormat.clock(cue.range.start.seconds))
+                .font(.system(size: 11, weight: .medium)).monospacedDigit()
+                .foregroundStyle(isCurrent ? amber : .white.opacity(0.4))
+                .frame(width: 40, alignment: .leading)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                FlowLayout(spacing: 2, lineSpacing: 3, alignment: .leading) {
+                    ForEach(Array(SubtitleText.words(cue.text).enumerated()), id: \.offset) { index, word in
+                        let bare = SubtitleText.bare(word)
+                        let identity = WordLookup(word: bare, sentence: cue.text, line: i, index: index)
+                        SubtitleWord(word: word, color: color, lookup: $lookup, identity: identity) {
+                            guard !bare.isEmpty else { return }
+                            resumeAfterLookup = session.engine.state == .playing
+                            session.engine.pause()
+                            lookup = identity
+                        }
+                    }
+                }
+                .font(.system(size: 13, weight: isCurrent ? .bold : .medium))
+                .blur(radius: session.subtitleMode == .blurPrimary ? 5 : 0)
+                .allowsHitTesting(session.subtitleMode != .blurPrimary)
+                if session.subtitleMode == .bilingual, let translation = session.translation(for: cue) {
+                    Text(translation.replacingOccurrences(of: "\n", with: " "))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .overlay(alignment: .leading) {
-                if isCurrent { Capsule().fill(amber).frame(width: 3).padding(.vertical, 4) }
-            }
-            .contentShape(Rectangle())
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(.plain).clickablePointer()
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            if isCurrent { RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.white.opacity(0.12)) }
+        }
+        .contentShape(Rectangle())
+        // 点单词查词，点行内其他位置跳到这一句。
+        .onTapGesture { session.jump(toLine: i) }
+        .clickablePointer()
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "跳到这一句") { session.jump(toLine: i) }
     }
 }
 
