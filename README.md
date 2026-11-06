@@ -28,12 +28,13 @@ xcodebuild -project ELEnglish.xcodeproj -scheme ELEnglish -derivedDataPath build
 
 ## 自动打包与版本
 
-推送 `master`、推送 `v*` 标签或手动运行 `Build unsigned Pixon app`，会构建 macOS 通用测试包并发布到 [GitHub Releases](https://github.com/atomjaylee/LingoFrame/releases)。
+推送 `master`、推送 `v*` 标签或手动运行 `Build unsigned Pixon app`，会构建 macOS 通用安装包并发布为正式 [GitHub Release](https://github.com/atomjaylee/LingoFrame/releases)，最新一次显示在仓库主页的 Latest 位置。
 
 - 普通构建：以 `project.yml` 的 `CFBundleShortVersionString` 为基础，补丁号加上本工作流的 `GITHUB_RUN_NUMBER`。例如基础版本 `0.1.0` 的第 12 次运行得到 `0.1.12`。
-- 构建号：`运行序号.重试次数`，例如 `12.1`；重跑同一次任务时应用版本不变，构建号成为 `12.2`。
-- 测试 Release 标签：例如 `v0.1.12-test.12.1`；DMG 文件名也包含应用版本、构建号和 `universal-unsigned`。
-- 版本标签构建：必须使用 `v主版本.次版本.补丁版本`（例如 `v0.2.0`），应用直接采用标签版本，仍发布为未公证测试版。
+- 构建号：`运行序号.重试次数`，例如 `12.1`；重跑同一次任务时应用版本不变，构建号成为 `12.2`，新的 DMG 追加到同一个 Release。
+- Release 标签：例如 `v0.1.12`；DMG 文件名包含应用版本、构建号和 `universal-unsigned`。
+- 版本标签构建：必须使用 `v主版本.次版本.补丁版本`（例如 `v0.2.0`），应用直接采用标签版本。
+- 所有构建都没有 Developer ID 签名和 Apple 公证。
 - 失败运行也占用序号，版本允许跳号。自动计算只修改 CI 中生成的 Info.plist，不向仓库回写提交。
 
 日常补丁版本不需要手动修改。进入新的版本系列时，将 `project.yml` 的基础版本改为例如 `0.2.0`；仅推送标签不会修改后续普通构建的基础版本。应用设置页、安装包与 Release 读取同一计算结果。

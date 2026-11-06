@@ -115,10 +115,8 @@ jobs:
           else
             gh release create "$RELEASE_TAG" "build/$DMG_NAME" \
               --target "$GITHUB_SHA" \
-              --title "Pixon $APP_VERSION (test build $BUILD_VERSION)" \
-              --notes "Download $DMG_NAME below. App version: $APP_VERSION; build: $BUILD_VERSION. Universal app for Apple Silicon and Intel; requires macOS 15 or later. This test build has no Developer ID signature or Apple notarization. Source commit: $GITHUB_SHA." \
-              --prerelease \
-              --latest=false
+              --title "Pixon $APP_VERSION" \
+              --notes "Download $DMG_NAME below. App version: $APP_VERSION; build: $BUILD_VERSION. Universal app for Apple Silicon and Intel; requires macOS 15 or later. This build has no Developer ID signature or Apple notarization. Source commit: $GITHUB_SHA."
           fi
 
           RELEASE_URL="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
